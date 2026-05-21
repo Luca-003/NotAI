@@ -1,0 +1,117 @@
+# NotAI - override PROD: resource limits, niente porte esposte sull'host,
+# log livello WARNING, healthcheck più strict, restart=always.
+
+services:
+  postgres:
+    deploy:
+      resources:
+        limits: { memory: 4G, cpus: "2" }
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements,pgaudit"
+      - "-c"
+      - "log_statement=ddl"
+      - "-c"
+      - "max_connections=300"
+      - "-c"
+      - "pgaudit.log=write,role,ddl"
+    restart: always
+
+  temporal:
+    deploy:
+      resources:
+        limits: { memory: 2G, cpus: "2" }
+    restart: always
+
+  temporal-ui:
+    # In prod la UI Temporal sta dietro Caddy con auth.
+    deploy:
+      resources:
+        limits: { memory: 256M, cpus: "0.5" }
+    restart: always
+
+  minio:
+    deploy:
+      resources:
+        limits: { memory: 2G, cpus: "1" }
+    restart: always
+
+  opensearch:
+    environment:
+      OPENSEARCH_JAVA_OPTS: "-Xms2g -Xmx2g"
+    deploy:
+      resources:
+        limits: { memory: 4G, cpus: "2" }
+    restart: always
+
+  qdrant:
+    deploy:
+      resources:
+        limits: { memory: 2G, cpus: "1" }
+    restart: always
+
+  vault:
+    # In prod Vault NON va in dev-mode. Override richiede config production con unseal.
+    # Marcato fail-closed finché non viene fornita configurazione production.
+    command: ["vault", "server", "-config=/vault/config/config.hcl"]
+    volumes:
+      - ./docker/vault/config.hcl:/vault/config/config.hcl:ro
+      - vault-data:/vault/file
+    restart: always
+
+  litellm:
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "1" }
+    restart: always
+
+  notai-api:
+    environment:
+      NOTAI_ENV: prod
+      NOTAI_LOG_LEVEL: WARNING
+      NOTAI_API_WORKERS: 4
+    command:
+      - "uvicorn"
+      - "apps.api.main:app"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--workers"
+      - "4"
+      - "--log-level"
+      - "warning"
+    deploy:
+      replicas: 2
+      resources:
+        limits: { memory: 2G, cpus: "2" }
+    restart: always
+
+  notai-workers:
+    environment:
+      NOTAI_ENV: prod
+      NOTAI_LOG_LEVEL: WARNING
+    deploy:
+      replicas: 2
+      resources:
+        limits: { memory: 2G, cpus: "2" }
+    restart: always
+
+  notai-web:
+    deploy:
+      resources:
+        limits: { memory: 256M, cpus: "0.5" }
+    restart: always
+
+  caddy:
+    deploy:
+      resources:
+        limits: { memory: 256M, cpus: "0.5" }
+    restart: always
+
+  otel-collector:
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "0.5" }
+    restart: always

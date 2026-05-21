@@ -1,0 +1,389 @@
+# NotAI - Compose base.
+# Override:
+#   compose.dev.yml  -> mount sorgenti, hot reload, esposizione porte verso host
+#   compose.gpu.yml  -> abilita vLLM su GPU NVIDIA
+#   compose.prod.yml -> resource limits, replicas, no porte esposte
+# I servizi qui sono in stato comune. NIENTE bind mount del codice qui dentro.
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 30s
+
+networks:
+  notai-internal:
+    driver: bridge
+  notai-edge:
+    driver: bridge
+
+volumes:
+  pgdata:
+  temporal-pgdata:
+  minio-data:
+  opensearch-data:
+  qdrant-data:
+  vault-data:
+  vllm-models:
+  llama-cpp-models:
+  caddy-data:
+  caddy-config:
+
+services:
+  # ---------------------------------------------------------------------------
+  # Postgres - DB principale + audit event store
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:-notai}
+      POSTGRES_APP_ROLE: ${POSTGRES_APP_ROLE:-notai_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?required}
+      POSTGRES_MIGRATOR_ROLE: ${POSTGRES_MIGRATOR_ROLE:-notai_migrator}
+      POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:?required}
+      POSTGRES_AUDIT_WRITER_ROLE: ${POSTGRES_AUDIT_WRITER_ROLE:-notai_audit_writer}
+      POSTGRES_AUDIT_WRITER_PASSWORD: ${POSTGRES_AUDIT_WRITER_PASSWORD:?required}
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "log_statement=ddl"
+      - "-c"
+      - "max_connections=200"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks: [notai-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER:-postgres} -d ${POSTGRES_DB:-notai}"]
+      <<: *healthcheck-defaults
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Temporal - workflow engine (DB Postgres dedicato sullo stesso server)
+  # ---------------------------------------------------------------------------
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PWD: ${POSTGRES_SUPERUSER_PASSWORD:?required}
+      POSTGRES_SEEDS: postgres
+      DBNAME: ${TEMPORAL_DB:-temporal}
+      VISIBILITY_DBNAME: ${TEMPORAL_VISIBILITY_DB:-temporal_visibility}
+      DEFAULT_NAMESPACE: ${TEMPORAL_NAMESPACE:-notai}
+      DEFAULT_NAMESPACE_RETENTION: 168h
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [notai-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "tctl --address temporal:7233 cluster health || exit 1"]
+      <<: *healthcheck-defaults
+      start_period: 60s
+    restart: unless-stopped
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000,http://localhost:8088
+    depends_on:
+      temporal:
+        condition: service_healthy
+    networks: [notai-internal, notai-edge]
+
+  # ---------------------------------------------------------------------------
+  # MinIO - object storage WORM per documenti e bundle audit
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?required}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    networks: [notai-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      <<: *healthcheck-defaults
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-10-08T09-37-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?required}
+      MINIO_BUCKET_DOCUMENTS: ${MINIO_BUCKET_DOCUMENTS:-notai-documents}
+      MINIO_BUCKET_AUDIT: ${MINIO_BUCKET_AUDIT:-notai-audit-bundles}
+      MINIO_BUCKET_MODELS: ${MINIO_BUCKET_MODELS:-notai-llm-models}
+    entrypoint: ["/bin/sh", "/init.sh"]
+    volumes:
+      - ./docker/minio/init.sh:/init.sh:ro
+    networks: [notai-internal]
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # OpenSearch - BM25 + facet su clausole/atti
+  # ---------------------------------------------------------------------------
+  opensearch:
+    image: opensearchproject/opensearch:2.17.0
+    environment:
+      cluster.name: notai-opensearch
+      node.name: opensearch-node1
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms1g -Xmx1g"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD:?required}
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    networks: [notai-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk -u admin:${OPENSEARCH_INITIAL_ADMIN_PASSWORD} https://localhost:9200/_cluster/health | grep -E 'green|yellow' || exit 1"]
+      <<: *healthcheck-defaults
+      start_period: 60s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Qdrant - vector DB per RAG
+  # ---------------------------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?required}
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks: [notai-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/readyz || exit 1"]
+      <<: *healthcheck-defaults
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Vault - secret store
+  # ---------------------------------------------------------------------------
+  vault:
+    image: hashicorp/vault:1.18
+    cap_add: ["IPC_LOCK"]
+    environment:
+      VAULT_ADDR: http://0.0.0.0:8200
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:?required}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    command: ["vault", "server", "-dev"]
+    volumes:
+      - vault-data:/vault/file
+    networks: [notai-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8200/v1/sys/health | grep -q '\"initialized\":true' || exit 1"]
+      <<: *healthcheck-defaults
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # LLM serving - llama.cpp fallback CPU (sempre presente); vLLM via compose.gpu.yml
+  # ---------------------------------------------------------------------------
+  llama-cpp:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "-m"
+      - "${LLAMA_CPP_MODEL:-/models/qwen2.5-7b-instruct-q4_k_m.gguf}"
+      - "-c"
+      - "8192"
+      - "--api-key"
+      - "${LITELLM_MASTER_KEY:?required}"
+    volumes:
+      - llama-cpp-models:/models
+    networks: [notai-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      <<: *healthcheck-defaults
+      start_period: 120s
+    restart: unless-stopped
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?required}
+      LITELLM_LOG: INFO
+    command: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+    volumes:
+      - ./docker/litellm/config.yaml:/etc/litellm/config.yaml:ro
+    depends_on:
+      llama-cpp:
+        condition: service_healthy
+    networks: [notai-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health/liveliness || exit 1"]
+      <<: *healthcheck-defaults
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # NotAI - migrazioni one-shot (Alembic)
+  # ---------------------------------------------------------------------------
+  notai-migrator:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+      target: runtime
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_MIGRATOR_ROLE:-notai_migrator}
+      POSTGRES_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:-notai}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [notai-internal]
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # NotAI - API FastAPI
+  # ---------------------------------------------------------------------------
+  notai-api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+      target: runtime
+    environment:
+      NOTAI_ENV: ${NOTAI_ENV:-dev}
+      NOTAI_LOG_LEVEL: ${NOTAI_LOG_LEVEL:-INFO}
+      NOTAI_TZ: ${NOTAI_TZ:-Europe/Rome}
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_APP_ROLE:-notai_app}
+      POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:-notai}
+      MINIO_HOST: minio
+      MINIO_PORT: 9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?required}
+      OPENSEARCH_HOST: opensearch
+      QDRANT_HOST: qdrant
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?required}
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:?required}
+      TEMPORAL_HOST: temporal
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-notai}
+      LITELLM_HOST: litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?required}
+      NOTAI_JWT_SECRET: ${NOTAI_JWT_SECRET:?required}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: notai-api
+    depends_on:
+      notai-migrator:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    networks: [notai-internal, notai-edge]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/health || exit 1"]
+      <<: *healthcheck-defaults
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # NotAI - workers (Temporal)
+  # ---------------------------------------------------------------------------
+  notai-workers:
+    build:
+      context: .
+      dockerfile: docker/workers.Dockerfile
+      target: runtime
+    environment:
+      NOTAI_ENV: ${NOTAI_ENV:-dev}
+      NOTAI_LOG_LEVEL: ${NOTAI_LOG_LEVEL:-INFO}
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_APP_ROLE:-notai_app}
+      POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:-notai}
+      TEMPORAL_HOST: temporal
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-notai}
+      TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE:-notai-main}
+      LITELLM_HOST: litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?required}
+      MINIO_HOST: minio
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?required}
+      OPENSEARCH_HOST: opensearch
+      QDRANT_HOST: qdrant
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?required}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: notai-workers
+    depends_on:
+      notai-api:
+        condition: service_healthy
+    networks: [notai-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import sys; sys.exit(0)' || exit 1"]
+      <<: *healthcheck-defaults
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # NotAI - web (frontend React buildato + Nginx)
+  # ---------------------------------------------------------------------------
+  notai-web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        VITE_API_BASE_URL: ${WEB_API_BASE_URL:-/api}
+    networks: [notai-internal, notai-edge]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/healthz || exit 1"]
+      <<: *healthcheck-defaults
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Caddy - reverse proxy + TLS
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2.8-alpine
+    environment:
+      NOTAI_API_HOST: notai-api:8000
+      NOTAI_WEB_HOST: notai-web:80
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      notai-api:
+        condition: service_healthy
+      notai-web:
+        condition: service_healthy
+    networks: [notai-internal, notai-edge]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Observability
+  # ---------------------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    command: ["--config=/etc/otel/collector-config.yaml"]
+    volumes:
+      - ./docker/otel/collector-config.yaml:/etc/otel/collector-config.yaml:ro
+    networks: [notai-internal]
+    restart: unless-stopped

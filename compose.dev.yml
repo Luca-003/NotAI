@@ -1,0 +1,77 @@
+# NotAI - override DEV: espone porte verso host, hot reload, log verbosi.
+
+services:
+  postgres:
+    ports: ["5432:5432"]
+
+  temporal-ui:
+    ports: ["8088:8080"]
+
+  minio:
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  opensearch:
+    ports: ["9200:9200"]
+
+  qdrant:
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+
+  vault:
+    ports: ["8200:8200"]
+
+  litellm:
+    ports: ["4000:4000"]
+
+  llama-cpp:
+    ports: ["8080:8080"]
+
+  notai-api:
+    command:
+      - "uvicorn"
+      - "apps.api.main:app"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--reload"
+      - "--log-level"
+      - "debug"
+    environment:
+      NOTAI_ENV: dev
+      NOTAI_LOG_LEVEL: DEBUG
+    volumes:
+      - ./notai:/app/notai
+      - ./apps:/app/apps
+      - ./migrations:/app/migrations
+    ports: ["8000:8000"]
+
+  notai-workers:
+    environment:
+      NOTAI_ENV: dev
+      NOTAI_LOG_LEVEL: DEBUG
+    volumes:
+      - ./notai:/app/notai
+      - ./apps:/app/apps
+
+  notai-web:
+    # In dev sostituiamo Nginx con Vite dev server con HMR.
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      target: dev
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+    ports: ["5173:5173"]
+
+  caddy:
+    ports:
+      - "80:80"
+      - "443:443"

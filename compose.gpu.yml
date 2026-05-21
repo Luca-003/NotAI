@@ -1,0 +1,46 @@
+# NotAI - override GPU: aggiunge vLLM su GPU NVIDIA.
+# Richiede NVIDIA Container Toolkit installato sul host.
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.6.3
+    command:
+      - "--model"
+      - "${VLLM_MODEL_PATH:-/models/Qwen2.5-7B-Instruct}"
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+      - "--api-key"
+      - "${LITELLM_MASTER_KEY:?required}"
+      - "--max-model-len"
+      - "8192"
+      - "--gpu-memory-utilization"
+      - "0.90"
+    volumes:
+      - vllm-models:/models
+    networks: [notai-internal]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 180s
+    restart: unless-stopped
+
+  # In modalità GPU litellm punta a vllm come primario e llama-cpp solo come fallback.
+  litellm:
+    environment:
+      LITELLM_PRIMARY_BACKEND: vllm
+    depends_on:
+      vllm:
+        condition: service_healthy
+      llama-cpp:
+        condition: service_healthy

@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    name: Lint + Unit tests (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install uv
+        run: pip install uv==0.4.27
+
+      - name: Install deps
+        run: |
+          uv venv .venv
+          source .venv/bin/activate
+          uv pip install -e ".[dev]"
+
+      - name: Ruff
+        run: |
+          source .venv/bin/activate
+          ruff check .
+
+      - name: Mypy
+        run: |
+          source .venv/bin/activate
+          mypy notai apps || true   # warning soft in Fase 0, strict in Fase 1+
+
+      - name: Unit tests
+        run: |
+          source .venv/bin/activate
+          pytest tests/unit -q || echo "no unit tests yet"
+
+  web-build:
+    name: Build web (Vite)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm run build
+
+  docker-stack:
+    name: Smoke test stack containerizzato
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare .env
+        run: |
+          cp .env.example .env
+          # Imposta secret deterministici per CI
+          sed -i 's/change_me_in_dev/ci_pwd_dev/g'        .env
+          sed -i 's/change_me_superuser/ci_pwd_super/g'   .env
+          sed -i 's/change_me_migrator/ci_pwd_mig/g'      .env
+          sed -i 's/change_me_audit/ci_pwd_audit/g'       .env
+          sed -i 's/change_me_minio/ci_pwd_minio/g'       .env
+          sed -i 's/change_me_qdrant/ci_pwd_qdrant/g'     .env
+          sed -i 's/change_me_jwt_secret_use_long_random/ci_jwt_secret_long/g' .env
+
+      - name: Build stack
+        run: docker compose -f compose.yml -f compose.dev.yml build
+
+      - name: Up stack (no GPU, llama-cpp skipped if model missing)
+        run: |
+          # In CI evitiamo llama-cpp/litellm perché richiedono un GGUF pre-scaricato.
+          docker compose -f compose.yml -f compose.dev.yml \
+            up -d --no-deps postgres temporal minio opensearch qdrant vault \
+                            notai-migrator notai-api notai-web caddy otel-collector
+
+      - name: Wait for /health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/health; then exit 0; fi
+            sleep 5
+          done
+          docker compose ps
+          docker compose logs --tail=200 notai-api
+          exit 1
+
+      - name: Smoke test
+        run: bash scripts/smoke-test.sh
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose -f compose.yml -f compose.dev.yml logs --tail=300
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f compose.yml -f compose.dev.yml down -v

@@ -1,0 +1,44 @@
+# NotAI - LiteLLM gateway config.
+# Definisce i modelli locali serviti da llama.cpp e (opzionale) vLLM.
+# L'app interna parla SEMPRE con litellm:4000 - mai direttamente col runtime.
+
+model_list:
+  # Primario CPU: llama.cpp (sempre presente per dev senza GPU)
+  - model_name: local/qwen2.5-7b-cpu
+    litellm_params:
+      model: openai/qwen2.5-7b
+      api_base: http://llama-cpp:8080/v1
+      api_key: os.environ/LITELLM_MASTER_KEY
+
+  # Primario GPU: vLLM (solo se compose.gpu.yml attivo; il container 'vllm' è raggiungibile)
+  - model_name: local/qwen2.5-7b
+    litellm_params:
+      model: openai/qwen2.5-7b
+      api_base: http://vllm:8000/v1
+      api_key: os.environ/LITELLM_MASTER_KEY
+      # Se vLLM non è disponibile, LiteLLM fa fallback automatico (vedi router_settings)
+
+  # Modello per estrazione strutturata (più piccolo, più veloce)
+  - model_name: local/extraction
+    litellm_params:
+      model: openai/qwen2.5-7b
+      api_base: http://llama-cpp:8080/v1
+      api_key: os.environ/LITELLM_MASTER_KEY
+
+router_settings:
+  routing_strategy: simple-shuffle
+  fallbacks:
+    - { "local/qwen2.5-7b": ["local/qwen2.5-7b-cpu"] }
+
+litellm_settings:
+  # Mai numeri inventati: temperature default 0.
+  set_verbose: false
+  drop_params: true
+  default_temperature: 0
+  request_timeout: 120
+  num_retries: 2
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # Logging dettagliato richiesto per audit (l'app re-logga comunque)
+  database_url: null

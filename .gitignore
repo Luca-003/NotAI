@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+apps/web/dist/
+apps/web/.vite/
+*.log
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+!docker/**/dev-*.pem
+secrets/
+
+# Docker volumes (montaggio bind in dev)
+.volumes/
+
+# Models (NON committare i pesi)
+models/
+
+# Tests artifacts
+test-results/
+playwright-report/
+.playwright/
+
+# OS
+Thumbs.db
