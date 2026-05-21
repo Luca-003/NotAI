@@ -234,8 +234,11 @@ services:
     # dalla config montata. Avvia il backend tu prima (--profile llm per llama-cpp,
     # nessuno per Ollama-on-host).
     networks: [notai-internal]
+    # L'immagine LiteLLM non ha wget/curl; usiamo python (presente) per probe HTTP.
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health/liveliness || exit 1"]
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4000/health/liveliness',timeout=3).status==200 else 1)\""
       <<: *healthcheck-defaults
     restart: unless-stopped
 

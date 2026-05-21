@@ -54,9 +54,11 @@ async def scoped_session(
 
     async with factory() as session:
         if tid is not None:
-            # SET LOCAL è attivo solo per la transazione corrente.
+            # set_config(name, value, is_local=true) e' l'equivalente parametrizzabile
+            # di SET LOCAL: il GUC dura il tempo della transazione corrente.
             await session.execute(
-                text("SET LOCAL app.tenant_id = :tid"), {"tid": str(tid)}
+                text("SELECT set_config('app.tenant_id', :tid, true)"),
+                {"tid": str(tid)},
             )
         try:
             yield session

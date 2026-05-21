@@ -23,6 +23,16 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# Import dei modelli SQLAlchemy: popola Base.metadata per autogenerate.
+# NB: import *side-effect* - serve solo a registrare le tabelle.
+from notai.shared.domain.base import Base  # noqa: E402
+import notai.contexts.iam.models  # noqa: E402, F401
+import notai.contexts.parties.models  # noqa: E402, F401
+import notai.contexts.practices.models  # noqa: E402, F401
+import notai.contexts.documents.models  # noqa: E402, F401
+import notai.contexts.search.models  # noqa: E402, F401
+import notai.contexts.audit.models  # noqa: E402, F401
+
 # Costruisce la URL dal env (driver psycopg sync per Alembic, non asyncpg)
 _pg_host = os.environ.get("POSTGRES_HOST", "postgres")
 _pg_port = os.environ.get("POSTGRES_PORT", "5432")
@@ -35,8 +45,7 @@ config.set_main_option(
     f"postgresql+psycopg://{_pg_user}:{_pg_pwd}@{_pg_host}:{_pg_port}/{_pg_db}",
 )
 
-# I metadata target verranno popolati appena introdurremo i modelli SQLAlchemy.
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
