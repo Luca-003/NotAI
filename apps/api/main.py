@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from apps.api.middleware.tenancy import TenancyMiddleware
-from apps.api.routers import health, me
+from apps.api.routers import health, llm, me
 from notai.config import get_settings
 
 logger = structlog.get_logger(__name__)
@@ -73,6 +73,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(me.router, prefix="/api/v1")
+    app.include_router(llm.router, prefix="/api/v1")
 
     @app.exception_handler(Exception)
     async def _unhandled(_: Request, exc: Exception) -> JSONResponse:

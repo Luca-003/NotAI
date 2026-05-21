@@ -20,10 +20,12 @@ WORKDIR /build
 
 COPY pyproject.toml ./
 
-# Crea venv e installa solo dipendenze runtime
+# Crea venv e installa dipendenze runtime.
+# Evitiamo process substitution `<(...)` (bash-only) usando un file intermedio,
+# così funziona anche con /bin/sh (dash) di python:slim.
 RUN uv venv /opt/venv && \
-    . /opt/venv/bin/activate && \
-    uv pip install --no-cache -r <(uv pip compile pyproject.toml --quiet)
+    uv pip compile pyproject.toml --quiet -o /tmp/requirements.txt && \
+    uv pip install --no-cache --python /opt/venv/bin/python -r /tmp/requirements.txt
 
 # -----------------------------------------------------------------------------
 # Stage 2: runtime - immagine snella, utente non-root

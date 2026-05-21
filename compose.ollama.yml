@@ -1,0 +1,24 @@
+# NotAI - override per usare Ollama sul host invece di llama-cpp containerizzato.
+#
+# Prerequisito sul host:
+#   ollama pull qwen2.5:7b-instruct
+#   ollama pull bge-m3                          # embeddings
+#
+# Avvio:
+#   docker compose -f compose.yml -f compose.dev.yml -f compose.ollama.yml up -d litellm
+#
+# Su Windows e Mac `host.docker.internal` risolve l'host automaticamente.
+# Su Linux serve `extra_hosts: - host.docker.internal:host-gateway` (gia' aggiunto).
+
+services:
+  litellm:
+    # Forziamo l'attivazione anche senza profilo "llm" (Ollama e' gia' pronto sull'host).
+    profiles: []
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?required}
+      LITELLM_LOG: INFO
+      OLLAMA_API_BASE: http://host.docker.internal:11434
+    volumes:
+      - ./docker/litellm/config.ollama.yaml:/etc/litellm/config.yaml:ro

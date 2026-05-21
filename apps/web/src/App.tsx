@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { LLMModelPicker } from "./components/LLMModelPicker";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
@@ -22,7 +23,7 @@ export function App() {
   const ready = useQuery({ queryKey: ["readyz"], queryFn: fetchReadyz, refetchInterval: 10_000 });
 
   return (
-    <div style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 720, margin: "0 auto" }}>
+    <div style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 960, margin: "0 auto" }}>
       <h1>NotAI</h1>
       <p style={{ color: "#555" }}>
         Piattaforma di automazione per studi notarili e legali italiani — skeleton Fase 0.
@@ -60,6 +61,8 @@ export function App() {
           </div>
         )}
       </section>
+
+      <LLMModelPicker />
 
       <footer style={{ marginTop: "3rem", color: "#888", fontSize: "0.85rem" }}>
         Build dev — solo skeleton.

@@ -1,0 +1,84 @@
+# NotAI - LiteLLM gateway config con backend Ollama (sul host).
+#
+# Definisce un set di ALIAS che l'app puo' selezionare via env (NOTAI_LLM_*).
+# L'utente sceglie quali modelli scaricare sull'host con `ollama pull`; gli alias
+# che puntano a modelli non ancora scaricati semplicemente non funzioneranno
+# finche' non sono installati.
+#
+# Comandi tipo per installare modelli:
+#   ollama pull qwen2.5:7b-instruct       # generativo medio
+#   ollama pull qwen2.5:14b-instruct      # generativo grosso
+#   ollama pull llama3.1:8b-instruct      # alternativa Meta
+#   ollama pull mistral:7b-instruct       # alternativa Mistral
+#   ollama pull bge-m3                    # embeddings multilingue
+#   ollama pull nomic-embed-text          # embeddings (alternativa)
+#   ollama pull qwen2.5:3b-instruct       # piccolo, per estrazione veloce / verifier
+#
+# Aggiungere/rimuovere voci qui per esporre nuovi alias all'app. L'app li scopre
+# automaticamente via GET /v1/models su LiteLLM e li mostra nella UI.
+
+model_list:
+  # ----- Famiglia Qwen 2.5 (default raccomandata) -----
+  - model_name: local/qwen2.5-7b
+    litellm_params:
+      model: ollama_chat/qwen2.5:7b-instruct
+      api_base: http://host.docker.internal:11434
+
+  - model_name: local/qwen2.5-14b
+    litellm_params:
+      model: ollama_chat/qwen2.5:14b-instruct
+      api_base: http://host.docker.internal:11434
+
+  - model_name: local/qwen2.5-32b
+    litellm_params:
+      model: ollama_chat/qwen2.5:32b-instruct
+      api_base: http://host.docker.internal:11434
+
+  - model_name: local/qwen2.5-3b
+    litellm_params:
+      model: ollama_chat/qwen2.5:3b-instruct
+      api_base: http://host.docker.internal:11434
+
+  # ----- Famiglia Llama -----
+  - model_name: local/llama3.1-8b
+    litellm_params:
+      model: ollama_chat/llama3.1:8b-instruct
+      api_base: http://host.docker.internal:11434
+
+  - model_name: local/llama3.1-70b
+    litellm_params:
+      model: ollama_chat/llama3.1:70b-instruct
+      api_base: http://host.docker.internal:11434
+
+  # ----- Famiglia Mistral -----
+  - model_name: local/mistral-7b
+    litellm_params:
+      model: ollama_chat/mistral:7b-instruct
+      api_base: http://host.docker.internal:11434
+
+  - model_name: local/mistral-small
+    litellm_params:
+      model: ollama_chat/mistral-small:latest
+      api_base: http://host.docker.internal:11434
+
+  # ----- Embeddings -----
+  - model_name: local/embeddings
+    litellm_params:
+      model: ollama/bge-m3
+      api_base: http://host.docker.internal:11434
+
+  - model_name: local/embeddings-nomic
+    litellm_params:
+      model: ollama/nomic-embed-text
+      api_base: http://host.docker.internal:11434
+
+litellm_settings:
+  set_verbose: false
+  drop_params: true
+  default_temperature: 0
+  request_timeout: 180
+  num_retries: 2
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: null

@@ -31,8 +31,8 @@ WORKDIR /app
 
 COPY --chown=notai:notai pyproject.toml ./
 RUN uv venv /opt/venv && \
-    . /opt/venv/bin/activate && \
-    uv pip install --no-cache -r <(uv pip compile pyproject.toml --quiet) && \
+    uv pip compile pyproject.toml --quiet -o /tmp/requirements.txt && \
+    uv pip install --no-cache --python /opt/venv/bin/python -r /tmp/requirements.txt && \
     chown -R notai:notai /opt/venv
 
 ENV PATH="/opt/venv/bin:$PATH"

@@ -70,6 +70,13 @@ services:
       - ./apps/web:/app
       - /app/node_modules
     ports: ["5173:5173"]
+    # Vite dev server non serve /healthz: override per evitare unhealthy permanente.
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:5173',(r)=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
 
   caddy:
     ports:

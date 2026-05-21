@@ -14,6 +14,28 @@ cp .env.example .env
 docker compose -f compose.yml -f compose.dev.yml up -d
 ```
 
+### LLM locale: opzioni
+
+**Opzione A — Ollama sul host (consigliata in dev su Windows/Mac):**
+```powershell
+# Una tantum: installa modelli su Ollama (https://ollama.com)
+ollama pull qwen2.5:7b-instruct
+ollama pull bge-m3
+
+# Aggiungi l'override per puntare LiteLLM a Ollama
+docker compose -f compose.yml -f compose.dev.yml -f compose.ollama.yml up -d litellm
+```
+
+**Opzione B — llama.cpp container (richiede un .gguf in `llama-cpp-models` volume):**
+```bash
+docker compose -f compose.yml -f compose.dev.yml --profile llm up -d
+```
+
+**Opzione C — vLLM su GPU NVIDIA:**
+```bash
+docker compose -f compose.yml -f compose.dev.yml -f compose.gpu.yml up -d
+```
+
 Apri:
 
 - Web app: <http://localhost:5173>

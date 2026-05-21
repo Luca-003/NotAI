@@ -34,7 +34,8 @@ services:
   # Postgres - DB principale + audit event store
   # ---------------------------------------------------------------------------
   postgres:
-    image: postgres:16-alpine
+    # Usiamo l'immagine pgvector ufficiale (estensione `vector` gia' presente).
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?required}
@@ -165,9 +166,8 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
     networks: [notai-internal]
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/readyz || exit 1"]
-      <<: *healthcheck-defaults
+    # L'immagine Qdrant e' distroless: niente wget/curl/bash. Niente healthcheck
+    # interno; la dipendenza usera' service_started + il client app fa retry.
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
@@ -180,12 +180,14 @@ services:
       VAULT_ADDR: http://0.0.0.0:8200
       VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:?required}
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      # vault CLI usato dall'healthcheck
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:?required}
     command: ["vault", "server", "-dev"]
     volumes:
       - vault-data:/vault/file
     networks: [notai-internal]
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8200/v1/sys/health | grep -q '\"initialized\":true' || exit 1"]
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
       <<: *healthcheck-defaults
     restart: unless-stopped
 
@@ -193,7 +195,12 @@ services:
   # LLM serving - llama.cpp fallback CPU (sempre presente); vLLM via compose.gpu.yml
   # ---------------------------------------------------------------------------
   llama-cpp:
-    image: ghcr.io/ggerganov/llama.cpp:server
+    # NB: il repo upstream e' migrato da ggerganov -> ggml-org. Manteniamo
+    # pull_policy=missing cosi' il servizio non blocca l'up dello stack base
+    # se l'immagine non e' ancora in locale.
+    image: ghcr.io/ggml-org/llama.cpp:server
+    pull_policy: missing
+    profiles: ["llm"]   # avvio opzionale: docker compose --profile llm up
     command:
       - "--host"
       - "0.0.0.0"
@@ -216,15 +223,16 @@ services:
 
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
+    profiles: ["llm"]   # opzionale: dipende da un backend LLM (llama-cpp o vllm)
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?required}
       LITELLM_LOG: INFO
     command: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
     volumes:
       - ./docker/litellm/config.yaml:/etc/litellm/config.yaml:ro
-    depends_on:
-      llama-cpp:
-        condition: service_healthy
+    # Niente depends_on hard: il backend (Ollama/llama-cpp/vLLM) e' selezionato
+    # dalla config montata. Avvia il backend tu prima (--profile llm per llama-cpp,
+    # nessuno per Ollama-on-host).
     networks: [notai-internal]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health/liveliness || exit 1"]
@@ -294,11 +302,12 @@ services:
       opensearch:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
+        # Qdrant non ha healthcheck (vedi sopra): start sufficiente; l'app fa retry.
+        condition: service_started
       vault:
         condition: service_healthy
-      litellm:
-        condition: service_healthy
+      # litellm e' avviato con profilo "llm"; quando presente, l'app lo usa.
+      # In Fase 0 l'API non chiama LLM, quindi non blocchiamo il boot su di esso.
     networks: [notai-internal, notai-edge]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8000/health || exit 1"]

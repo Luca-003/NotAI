@@ -85,12 +85,47 @@ class LiteLLMSettings(BaseSettings):
     host: str = "litellm"
     port: int = 4000
     master_key: SecretStr = SecretStr("sk-change-me-master")
-    model_primary: str = "local/qwen2.5-7b"
-    model_fallback: str = "local/qwen2.5-7b-cpu"
 
     @property
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+
+class LLMRoutingSettings(BaseSettings):
+    """Mappa ruolo applicativo -> alias di modello esposto da LiteLLM.
+
+    L'app non chiede mai "qwen 7b": chiede sempre un RUOLO (es. 'generation').
+    Cambiando l'env qui sotto si swappa il backend senza toccare il codice.
+
+    In Fase 1 questa mappa diventera' persistente su DB (per-tenant) e modificabile
+    via UI admin; in Fase 0 e' solo env (default da .env).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="NOTAI_LLM_", extra="ignore")
+
+    # Generazione di testo libero (redrafting clausole, riassunti).
+    generation: str = "local/qwen2.5-7b"
+    # Estrazione strutturata (parsing visure, dati da documenti).
+    extraction: str = "local/qwen2.5-7b"
+    # Embeddings per RAG.
+    embeddings: str = "local/embeddings"
+    # Verifier per cross-check abstention (idealmente modello diverso/piu' piccolo).
+    verifier: str = "local/qwen2.5-7b"
+    # Classificazione/tagging (zero-shot o few-shot).
+    classification: str = "local/qwen2.5-7b"
+
+    # Provider Ollama: URL diretto per discovery dei modelli installati sul host.
+    # L'app chiama l'API Ollama /api/tags per scoprire cosa l'utente ha gia' scaricato.
+    ollama_discovery_url: str = "http://host.docker.internal:11434"
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "generation": self.generation,
+            "extraction": self.extraction,
+            "embeddings": self.embeddings,
+            "verifier": self.verifier,
+            "classification": self.classification,
+        }
 
 
 class AuditSettings(BaseSettings):
@@ -132,6 +167,7 @@ class Settings(BaseSettings):
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     vault: VaultSettings = Field(default_factory=VaultSettings)
     litellm: LiteLLMSettings = Field(default_factory=LiteLLMSettings)
+    llm_routing: LLMRoutingSettings = Field(default_factory=LLMRoutingSettings)
     audit: AuditSettings = Field(default_factory=AuditSettings)
 
     @property
