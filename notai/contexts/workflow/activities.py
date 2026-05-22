@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 import structlog
 from temporalio import activity
 
+from notai.contexts.audit.hash_chain import canonical_json
 from notai.contexts.audit.logger import audit_logger
 from notai.contexts.integrations.anpr import AnprAdapter
 from notai.contexts.integrations.telemaco import TelemacoAdapter
@@ -40,9 +41,8 @@ logger = structlog.get_logger(__name__)
 
 
 def _hash_payload(payload: dict) -> str:
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    """SHA-256 del payload usando la stessa canonicalization RFC 8785 dell'audit chain."""
+    return hashlib.sha256(canonical_json(payload)).hexdigest()
 
 
 async def _audit(

@@ -3,27 +3,31 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from apps.api.deps import DbDep, TenantDep
+from apps.api.deps_modules import module_required
 from notai.contexts.audit.logger import audit_logger
 from notai.contexts.practices.acts_repository import ActRepository
 from notai.contexts.workflow.client import get_temporal_client
-from notai.contexts.workflow.common import WorkflowContext, make_workflow_id
-from notai.contexts.workflow.workflows import AtoWorkflow, AtoWorkflowInput
-from notai.shared.tenancy.session import scoped_session
+from notai.contexts.workflow.common import (
+    HumanReviewDecision,
+    HumanReviewResponse,
+    WorkflowContext,
+    make_workflow_id,
+)
+from notai.contexts.workflow.workflows import (
+    AtoWorkflow,
+    AtoWorkflowInput,
+    AtoWorkflowState,
+)
 
 router = APIRouter(prefix="/acts", tags=["acts"])
 
 WORKFLOW_TASK_QUEUE = "notai-main"
-
-
-def _require_tenant(request: Request) -> tuple[uuid.UUID, str | None]:
-    tid = getattr(request.state, "tenant_id", None)
-    if tid is None:
-        raise HTTPException(status_code=401, detail="missing or invalid JWT")
-    return tid, getattr(request.state, "user_id", None)
 
 
 # ---------------------------------------------------------------------------
@@ -75,60 +79,63 @@ class HumanReviewSignal(BaseModel):
 
 
 @router.post("", response_model=ActRead, status_code=status.HTTP_201_CREATED)
-async def create_act(payload: ActCreate, request: Request) -> ActRead:
-    tenant_id, actor = _require_tenant(request)
-    async with scoped_session(tenant_id) as session:
-        repo = ActRepository(session)
-        act = await repo.create(
-            tenant_id=tenant_id,
-            practice_id=payload.practice_id,
-            kind=payload.kind,
-            title=payload.title,
-        )
-        await audit_logger.append(
-            session=session,
-            tenant_id=tenant_id,
-            stream_id=f"act:{act.id}",
-            type="act.created",
-            payload={
-                "act_id": str(act.id),
-                "practice_id": str(act.practice_id),
-                "kind": act.kind,
-                "title": act.title,
-            },
-            actor=actor,
-        )
-        return ActRead.model_validate(act)
+async def create_act(
+    payload: ActCreate, principal: TenantDep, session: DbDep
+) -> ActRead:
+    repo = ActRepository(session)
+    act = await repo.create(
+        tenant_id=principal.tenant_id,
+        practice_id=payload.practice_id,
+        kind=payload.kind,
+        title=payload.title,
+    )
+    await audit_logger.append(
+        session=session,
+        tenant_id=principal.tenant_id,
+        stream_id=f"act:{act.id}",
+        type="act.created",
+        payload={
+            "act_id": str(act.id),
+            "practice_id": str(act.practice_id),
+            "kind": act.kind,
+            "title": act.title,
+        },
+        actor=principal.as_actor(),
+    )
+    return ActRead.model_validate(act)
 
 
 @router.get("/{act_id}", response_model=ActRead)
-async def get_act(act_id: uuid.UUID, request: Request) -> ActRead:
-    tenant_id, _ = _require_tenant(request)
-    async with scoped_session(tenant_id) as session:
-        act = await ActRepository(session).get(act_id)
-        if act is None:
-            raise HTTPException(status_code=404, detail="act not found")
-        return ActRead.model_validate(act)
+async def get_act(act_id: uuid.UUID, principal: TenantDep, session: DbDep) -> ActRead:
+    del principal
+    act = await ActRepository(session).get(act_id)
+    if act is None:
+        raise HTTPException(status_code=404, detail="act not found")
+    return ActRead.model_validate(act)
 
 
-@router.post("/{act_id}/workflow/start", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/{act_id}/workflow/start",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[module_required("notaio.workflow")],
+)
 async def start_workflow(
-    act_id: uuid.UUID, payload: StartWorkflowRequest, request: Request
+    act_id: uuid.UUID,
+    payload: StartWorkflowRequest,
+    principal: TenantDep,
+    session: DbDep,
 ) -> dict:
-    tenant_id, actor = _require_tenant(request)
-
-    async with scoped_session(tenant_id) as session:
-        repo = ActRepository(session)
-        act = await repo.get(act_id)
-        if act is None:
-            raise HTTPException(status_code=404, detail="act not found")
+    repo = ActRepository(session)
+    act = await repo.get(act_id)
+    if act is None:
+        raise HTTPException(status_code=404, detail="act not found")
 
     wf_id = make_workflow_id(act_id)
     ctx = WorkflowContext(
-        tenant_id=str(tenant_id),
+        tenant_id=str(principal.tenant_id),
         act_id=str(act_id),
         practice_id=str(act.practice_id),
-        actor=actor,
+        actor=principal.as_actor(),
     )
     wf_input = AtoWorkflowInput(
         ctx=ctx,
@@ -146,47 +153,50 @@ async def start_workflow(
         task_queue=WORKFLOW_TASK_QUEUE,
     )
 
-    async with scoped_session(tenant_id) as session:
-        repo = ActRepository(session)
-        await repo.update_workflow(
-            act_id,
-            workflow_run_id=handle.first_execution_run_id or wf_id,
-            status="running",
-        )
-        await audit_logger.append(
-            session=session,
-            tenant_id=tenant_id,
-            stream_id=f"act:{act_id}",
-            type="workflow.started",
-            payload={
-                "workflow_id": wf_id,
-                "template_id": payload.template_id,
-                "base_imponibile": payload.base_imponibile,
-            },
-            actor=actor,
-        )
+    await repo.update_workflow(
+        act_id,
+        workflow_run_id=handle.first_execution_run_id or wf_id,
+        status="running",
+    )
+    await audit_logger.append(
+        session=session,
+        tenant_id=principal.tenant_id,
+        stream_id=f"act:{act_id}",
+        type="workflow.started",
+        payload={
+            "workflow_id": wf_id,
+            "template_id": payload.template_id,
+            "base_imponibile": payload.base_imponibile,
+        },
+        actor=principal.as_actor(),
+    )
 
     return {"workflow_id": wf_id, "run_id": handle.first_execution_run_id}
 
 
-@router.get("/{act_id}/workflow/status")
-async def get_workflow_status(act_id: uuid.UUID, request: Request) -> dict:
-    tenant_id, _ = _require_tenant(request)
-    async with scoped_session(tenant_id) as session:
-        act = await ActRepository(session).get(act_id)
-        if act is None:
-            raise HTTPException(status_code=404, detail="act not found")
+@router.get(
+    "/{act_id}/workflow/status",
+    dependencies=[module_required("notaio.workflow")],
+)
+async def get_workflow_status(
+    act_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> dict:
+    del principal
+    act = await ActRepository(session).get(act_id)
+    if act is None:
+        raise HTTPException(status_code=404, detail="act not found")
 
     wf_id = make_workflow_id(act_id)
     client = await get_temporal_client()
-    from notai.contexts.workflow.workflows import AtoWorkflowState
     try:
         handle = client.get_workflow_handle(wf_id)
-        # Specifichiamo result_type per la deserializzazione del dataclass.
-        state: AtoWorkflowState = await handle.query("state", result_type=AtoWorkflowState)
+        state: AtoWorkflowState = await handle.query(
+            "state", result_type=AtoWorkflowState
+        )
     except Exception as e:  # noqa: BLE001
-        # Stato non disponibile (workflow non esiste o handle invalido)
-        raise HTTPException(status_code=404, detail=f"workflow state unavailable: {e}") from e
+        raise HTTPException(
+            status_code=404, detail=f"workflow state unavailable: {e}"
+        ) from e
     try:
         desc = await handle.describe()
         status_temporal = desc.status.name if desc.status else None
@@ -205,25 +215,26 @@ async def get_workflow_status(act_id: uuid.UUID, request: Request) -> dict:
     }
 
 
-@router.post("/{act_id}/workflow/human-review")
+@router.post(
+    "/{act_id}/workflow/human-review",
+    dependencies=[module_required("notaio.workflow")],
+)
 async def signal_human_review(
-    act_id: uuid.UUID, payload: HumanReviewSignal, request: Request
+    act_id: uuid.UUID,
+    payload: HumanReviewSignal,
+    principal: TenantDep,
+    session: DbDep,
 ) -> dict:
     """Invia un signal al workflow per chiudere il HumanTask di review."""
-    tenant_id, actor = _require_tenant(request)
-    # Verifica esistenza atto (RLS guard)
-    async with scoped_session(tenant_id) as session:
-        if (await ActRepository(session).get(act_id)) is None:
-            raise HTTPException(status_code=404, detail="act not found")
-
-    from datetime import datetime, timezone
-
-    from notai.contexts.workflow.common import HumanReviewResponse
+    if (await ActRepository(session).get(act_id)) is None:
+        raise HTTPException(status_code=404, detail="act not found")
+    # Valida la decision contro l'Enum (defense in depth oltre al regex Pydantic)
+    HumanReviewDecision(payload.decision)
 
     response = HumanReviewResponse(
         decision=payload.decision,
         notes=payload.notes,
-        user_id=actor,
+        user_id=principal.as_actor(),
         completed_at=datetime.now(timezone.utc),
         modifications=payload.modifications,
     )

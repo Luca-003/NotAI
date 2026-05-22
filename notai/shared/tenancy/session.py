@@ -25,7 +25,7 @@ from .context import current_tenant_id
 
 
 @lru_cache(maxsize=1)
-def _engine() -> AsyncEngine:
+def get_engine() -> AsyncEngine:
     return create_async_engine(
         get_settings().postgres.dsn,
         pool_size=10,
@@ -36,8 +36,13 @@ def _engine() -> AsyncEngine:
 
 
 @lru_cache(maxsize=1)
-def _session_factory() -> async_sessionmaker[AsyncSession]:
-    return async_sessionmaker(_engine(), expire_on_commit=False, class_=AsyncSession)
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(get_engine(), expire_on_commit=False, class_=AsyncSession)
+
+
+# Alias deprecati per compatibilita' (rimuovere in Fase 5+)
+_engine = get_engine
+_session_factory = get_session_factory
 
 
 @asynccontextmanager
@@ -50,7 +55,7 @@ async def scoped_session(
     RLS-protette restituiranno set vuoti — è voluto.
     """
     tid = tenant_id or current_tenant_id()
-    factory = _session_factory()
+    factory = get_session_factory()
 
     async with factory() as session:
         if tid is not None:

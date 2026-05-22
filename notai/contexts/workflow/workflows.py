@@ -1,8 +1,8 @@
 """Workflow Temporal per il ciclo di vita di un Atto.
 
-Stati attraversati:
+Stati attraversati (WorkflowStatus enum in common.py):
     bozza -> visure_in_corso -> draft_generated -> tax_calculated ->
-    review_requested -> review_completed -> firmato (signal) -> registrato
+    review_requested -> review_completed (signal) -> ...
 
 Tutti gli step long-running passano da activity (retry + timeout gestiti
 da Temporal). Le decisioni umane sono signals.
@@ -13,6 +13,7 @@ niente random, niente I/O dentro la funzione `run`. Tutto cio' va in activity.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
@@ -20,8 +21,6 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-# Tutti gli import non-Temporal vanno passati per `workflow.unsafe.imports_passed_through`
-# ma i nostri dataclass condivisi sono safe (no I/O).
 with workflow.unsafe.imports_passed_through():
     from .activities import (
         draft_generate,
@@ -34,12 +33,14 @@ with workflow.unsafe.imports_passed_through():
     from .common import (
         DraftRequest,
         DraftResult,
+        HumanReviewDecision,
         HumanReviewRequest,
         HumanReviewResponse,
         TaxCalculationRequest,
         VisuraRequest,
         VisuraResult,
         WorkflowContext,
+        WorkflowStatus,
     )
 
 
@@ -52,14 +53,14 @@ class AtoWorkflowInput:
     base_imponibile: float
     is_prima_casa: bool
     parties: list[dict] = field(default_factory=list)
-    # Ogni party: {"role": "venditore", "fiscal_code": "...", "vat": "..."}
+    # Ogni party: {"role": "venditore", "kind": "PF"|"PG", "fiscal_code": "...", "vat": "..."}
 
 
 @dataclass
 class AtoWorkflowState:
     """Stato esposto via query handler (sola lettura)."""
 
-    status: str = "bozza"
+    status: str = WorkflowStatus.BOZZA.value
     visure: list[dict] = field(default_factory=list)
     draft: dict | None = None
     tax: dict | None = None
@@ -76,6 +77,8 @@ class AtoWorkflow:
 
     def __init__(self) -> None:
         self._state = AtoWorkflowState()
+        # Cache locale del signal: NON deriva dallo state perche' Temporal richiede
+        # un punto fisso su cui chiamare wait_condition senza re-deserializzare il payload.
         self._review_response: HumanReviewResponse | None = None
         self._cancelled = False
 
@@ -96,47 +99,47 @@ class AtoWorkflow:
         ctx = input.ctx
         retry = RetryPolicy(maximum_attempts=3)
 
-        # 1) Visure su tutte le parti
-        self._state.status = "visure_in_corso"
-        visure_results: list[VisuraResult] = []
+        # 1) Visure PARALLELE su tutte le parti (asyncio.gather su execute_activity).
+        # Temporal supporta gather: ogni call e' un task indipendente con retry separato.
+        self._state.status = WorkflowStatus.VISURE_IN_CORSO.value
+        visure_tasks = []
         for party in input.parties:
             req = VisuraRequest(
                 ctx=ctx,
                 party_fiscal_code=party.get("fiscal_code"),
                 party_vat=party.get("vat"),
             )
-            # Una persona giuridica -> Telemaco; persona fisica -> ANPR
-            if party.get("kind") == "PG" or party.get("vat"):
-                act_fn = visura_telemaco
-            else:
-                act_fn = visura_anpr
-            res: VisuraResult = await workflow.execute_activity(
-                act_fn,
-                req,
-                start_to_close_timeout=timedelta(seconds=30),
-                retry_policy=retry,
+            act_fn = (
+                visura_telemaco
+                if party.get("kind") == "PG" or party.get("vat")
+                else visura_anpr
             )
-            visure_results.append(res)
-            self._state.visure.append({
-                "source": res.source,
-                "found": res.found,
-                "hash": res.hash,
-            })
+            visure_tasks.append(
+                workflow.execute_activity(
+                    act_fn,
+                    req,
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=retry,
+                )
+            )
+        visure_results: list[VisuraResult] = await asyncio.gather(*visure_tasks)
+        self._state.visure = [
+            {"source": r.source, "found": r.found, "hash": r.hash} for r in visure_results
+        ]
 
         # 2) Generazione bozza
-        self._state.status = "draft_in_corso"
-        draft_req = DraftRequest(
-            ctx=ctx,
-            template_id=input.template_id,
-            slots={
-                "parties": input.parties,
-                "visure_count": len(visure_results),
-                "base_imponibile": input.base_imponibile,
-            },
-        )
+        self._state.status = WorkflowStatus.DRAFT_IN_CORSO.value
         draft: DraftResult = await workflow.execute_activity(
             draft_generate,
-            draft_req,
+            DraftRequest(
+                ctx=ctx,
+                template_id=input.template_id,
+                slots={
+                    "parties": input.parties,
+                    "visure_count": len(visure_results),
+                    "base_imponibile": input.base_imponibile,
+                },
+            ),
             start_to_close_timeout=timedelta(seconds=60),
             retry_policy=retry,
         )
@@ -145,7 +148,7 @@ class AtoWorkflow:
             "sha256": draft.sha256,
             "storage_uri": draft.storage_uri,
         }
-        self._state.status = "draft_generated"
+        self._state.status = WorkflowStatus.DRAFT_GENERATED.value
 
         # 3) Calcolo imposte
         tax = await workflow.execute_activity(
@@ -160,10 +163,10 @@ class AtoWorkflow:
             retry_policy=retry,
         )
         self._state.tax = {"items": tax.items, "total": tax.total}
-        self._state.status = "tax_calculated"
+        self._state.status = WorkflowStatus.TAX_CALCULATED.value
 
         # 4) Apri HumanTask di review
-        self._state.status = "review_requested"
+        self._state.status = WorkflowStatus.REVIEW_REQUESTED.value
         await workflow.execute_activity(
             human_review_requested,
             HumanReviewRequest(
@@ -183,14 +186,14 @@ class AtoWorkflow:
                 timeout=timedelta(days=30),
             )
         except TimeoutError:
-            self._state.status = "review_timeout"
-            return {"status": "review_timeout", "state": self._state.__dict__}
+            self._state.status = WorkflowStatus.REVIEW_TIMEOUT.value
+            return {"status": self._state.status, "state": self._state.__dict__}
 
         if self._cancelled:
-            self._state.status = "cancelled"
-            return {"status": "cancelled", "state": self._state.__dict__}
+            self._state.status = WorkflowStatus.CANCELLED.value
+            return {"status": self._state.status, "state": self._state.__dict__}
 
-        # 6) Registra l'esito del review (e' arrivato il signal)
+        # 6) Registra l'esito del review
         assert self._review_response is not None
         await workflow.execute_activity(
             human_review_completed,
@@ -203,17 +206,14 @@ class AtoWorkflow:
             "user_id": self._review_response.user_id,
         }
 
-        if self._review_response.decision == "approved":
-            self._state.status = "review_completed"
-            # Fase 2 si ferma qui: la firma (smart card) richiede client desktop.
-            # In Fase 3 collegheremo l'endpoint che riceve il file firmato.
-            return {"status": "review_completed", "state": self._state.__dict__}
-        elif self._review_response.decision == "rejected":
-            self._state.status = "rejected"
-            return {"status": "rejected", "state": self._state.__dict__}
+        decision = self._review_response.decision
+        if decision == HumanReviewDecision.APPROVED.value:
+            self._state.status = WorkflowStatus.REVIEW_COMPLETED.value
+        elif decision == HumanReviewDecision.REJECTED.value:
+            self._state.status = WorkflowStatus.REJECTED.value
         else:
-            self._state.status = "needs_changes"
-            return {"status": "needs_changes", "state": self._state.__dict__}
+            self._state.status = WorkflowStatus.NEEDS_CHANGES.value
+        return {"status": self._state.status, "state": self._state.__dict__}
 
 
 ALL_WORKFLOWS = [AtoWorkflow]

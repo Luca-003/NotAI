@@ -17,7 +17,8 @@ from sqlalchemy.dialects.postgresql import insert
 
 from notai.config import get_settings
 from notai.contexts.iam.models import Tenant, User
-from notai.shared.tenancy.session import _session_factory
+from notai.contexts.modules.service import seed_defaults
+from notai.shared.tenancy.session import get_session_factory
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/dev", tags=["dev"])
@@ -50,7 +51,7 @@ async def bootstrap_tenant(payload: TenantBootstrap) -> TenantBootstrapResponse:
     # La tabella `tenants` non ha RLS (e' la root); l'inserimento e' libero.
     # `users` invece ha RLS, quindi prima di insertare un user dobbiamo settare
     # SET LOCAL app.tenant_id = <tenant.id>.
-    factory = _session_factory()
+    factory = get_session_factory()
     async with factory() as session:
         # Upsert tenant
         stmt = (
@@ -83,6 +84,9 @@ async def bootstrap_tenant(payload: TenantBootstrap) -> TenantBootstrapResponse:
             )
             .on_conflict_do_nothing(index_elements=["tenant_id", "email"])
         )
+
+        # Seed feature flags con i default del manifest
+        await seed_defaults(session, tenant.id)
 
         user = (
             await session.execute(

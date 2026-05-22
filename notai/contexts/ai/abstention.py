@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from notai.config import get_settings
 from notai.contexts.ai.schemas import StructuredAIOutput
 
 
@@ -35,8 +36,13 @@ class AbstentionDecision:
             self.reasons.append(reason)
 
 
-# Soglia di confidence minima accettabile (calibrabile per ruolo)
+# Soglia di confidence minima accettabile (calibrabile via env NOTAI_AI_CONFIDENCE_THRESHOLD).
+# Mantenuta come costante per backward-compat con i test, ma il default viene da Settings.
 DEFAULT_CONFIDENCE_THRESHOLD = 0.55
+
+
+def _confidence_threshold_default() -> float:
+    return get_settings().ai.confidence_threshold
 
 # Regex per individuare "numeri di rilievo" (importi, date, CF, IBAN)
 _NUM_PATTERNS = [

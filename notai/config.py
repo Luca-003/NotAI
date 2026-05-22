@@ -136,6 +136,25 @@ class AuditSettings(BaseSettings):
     tsa_hash_algo: str = "sha256"
 
 
+class AISettings(BaseSettings):
+    """Tuning del comportamento AI (zero-allucinazione)."""
+
+    model_config = SettingsConfigDict(env_prefix="NOTAI_AI_", extra="ignore")
+
+    # Soglia minima di confidence accettabile per l'abstention detector
+    confidence_threshold: float = 0.55
+    # HumanTask review: dopo quanti giorni di attesa il workflow timeout
+    human_review_timeout_days: int = 30
+    # Top-K chunks recuperati da RAG per ogni call AI
+    rag_top_k: int = 5
+    # Score minimo per considerare un chunk RAG rilevante (cosine similarity)
+    rag_min_score: float = 0.3
+    # Timeout HTTP per chiamate LLM (secondi)
+    llm_http_timeout: int = 180
+    # Max retries su backend LLM
+    llm_max_retries: int = 2
+
+
 class Settings(BaseSettings):
     """Configurazione principale dell'applicazione."""
 
@@ -169,6 +188,7 @@ class Settings(BaseSettings):
     litellm: LiteLLMSettings = Field(default_factory=LiteLLMSettings)
     llm_routing: LLMRoutingSettings = Field(default_factory=LLMRoutingSettings)
     audit: AuditSettings = Field(default_factory=AuditSettings)
+    ai: AISettings = Field(default_factory=AISettings)
 
     @property
     def cors_origin_list(self) -> list[str]:

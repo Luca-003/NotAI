@@ -22,6 +22,7 @@ from notai.contexts.iam.models import (  # noqa: F401
     User,
     UserRole,
 )
+from notai.contexts.modules.models import FeatureFlag  # noqa: F401
 from notai.contexts.parties.models import (  # noqa: F401
     AMLAssessment,
     Party,

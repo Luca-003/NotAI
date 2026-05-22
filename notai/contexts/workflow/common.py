@@ -1,4 +1,4 @@
-"""Dataclass condivisi tra workflow Temporal e activities.
+"""Dataclass condivisi tra workflow Temporal e activities + enum stati.
 
 Temporal serializza tutto via DataConverter; le activity input/output
 devono essere `@dataclass` o tipi primitivi. Niente SQLAlchemy model qui.
@@ -9,6 +9,38 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
+
+
+class WorkflowStatus(str, Enum):
+    """Stati attraversati dall'AtoWorkflow.
+
+    Uso str-Enum per serializzazione JSON nativa (compatibile con Temporal
+    DataConverter default). Il valore stringa e' quello esposto in API/audit.
+    """
+
+    BOZZA = "bozza"
+    VISURE_IN_CORSO = "visure_in_corso"
+    DRAFT_IN_CORSO = "draft_in_corso"
+    DRAFT_GENERATED = "draft_generated"
+    TAX_CALCULATED = "tax_calculated"
+    REVIEW_REQUESTED = "review_requested"
+    REVIEW_COMPLETED = "review_completed"
+    REVIEW_TIMEOUT = "review_timeout"
+    REJECTED = "rejected"
+    NEEDS_CHANGES = "needs_changes"
+    CANCELLED = "cancelled"
+
+
+class HumanReviewDecision(str, Enum):
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    CHANGED = "changed"
+
+
+class PartyKind(str, Enum):
+    PERSONA_FISICA = "PF"
+    PERSONA_GIURIDICA = "PG"
 
 
 @dataclass
@@ -83,7 +115,7 @@ class HumanReviewRequest:
 
 @dataclass
 class HumanReviewResponse:
-    decision: str             # "approved" | "rejected" | "changed"
+    decision: str             # HumanReviewDecision value
     notes: str | None = None
     user_id: str | None = None
     completed_at: datetime | None = None

@@ -10,7 +10,7 @@ from fastapi import APIRouter
 from sqlalchemy.sql import text
 
 from notai.config import get_settings
-from notai.shared.tenancy.session import _engine
+from notai.shared.tenancy.session import get_engine
 
 router = APIRouter(tags=["infra"])
 
@@ -34,7 +34,7 @@ async def readyz() -> dict[str, Any]:
 
     async def _check_db() -> None:
         try:
-            async with _engine().connect() as conn:
+            async with get_engine().connect() as conn:
                 await conn.execute(text("SELECT 1"))
             checks["postgres"] = "ok"
         except Exception as e:  # noqa: BLE001

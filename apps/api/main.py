@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from apps.api.middleware.tenancy import TenancyMiddleware
-from apps.api.routers import acts, ai, dev, health, llm, me, practices
+from apps.api.routers import acts, ai, dev, health, llm, me, modules, practices
 from notai.config import get_settings
 
 logger = structlog.get_logger(__name__)
@@ -77,6 +77,7 @@ def create_app() -> FastAPI:
     app.include_router(practices.router, prefix="/api/v1")
     app.include_router(acts.router, prefix="/api/v1")
     app.include_router(ai.router, prefix="/api/v1")
+    app.include_router(modules.router, prefix="/api/v1")
     if settings.env == "dev":
         app.include_router(dev.router, prefix="/api/v1")
 

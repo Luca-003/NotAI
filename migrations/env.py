@@ -27,6 +27,7 @@ if config.config_file_name is not None:
 # NB: import *side-effect* - serve solo a registrare le tabelle.
 from notai.shared.domain.base import Base  # noqa: E402
 import notai.contexts.iam.models  # noqa: E402, F401
+import notai.contexts.modules.models  # noqa: E402, F401
 import notai.contexts.parties.models  # noqa: E402, F401
 import notai.contexts.practices.models  # noqa: E402, F401
 import notai.contexts.documents.models  # noqa: E402, F401
