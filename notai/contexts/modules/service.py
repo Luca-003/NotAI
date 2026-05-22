@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from notai.contexts.audit.logger import audit_logger
+from notai.contexts.audit.streams import stream_for_tenant_config
 from notai.contexts.modules.models import FeatureFlag
 from notai.shared.domain.identifiers import as_uuid_or_none
 from notai.contexts.modules.registry import (
@@ -149,7 +150,7 @@ async def set_enabled(
     await audit_logger.append(
         session=session,
         tenant_id=tenant_id,
-        stream_id=f"tenant-config:{tenant_id}",
+        stream_id=stream_for_tenant_config(tenant_id),
         type="module.toggled",
         payload={"module_id": module_id, "enabled": enabled, "note": note},
         actor=actor,

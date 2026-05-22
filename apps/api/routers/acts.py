@@ -14,6 +14,8 @@ from apps.api.deps import DbDep, TenantDep
 from apps.api.deps_modules import module_required
 from apps.api.routers.documents import DocumentRead
 from notai.contexts.audit.logger import audit_logger
+from notai.contexts.audit.streams import stream_for_act
+from notai.contexts.documents.kinds import INPUT_SOURCE
 from notai.contexts.documents.models import Document
 from notai.contexts.practices.acts_repository import ActRepository
 from notai.contexts.workflow.client import get_temporal_client
@@ -96,7 +98,7 @@ async def create_act(
     await audit_logger.append(
         session=session,
         tenant_id=principal.tenant_id,
-        stream_id=f"act:{act.id}",
+        stream_id=stream_for_act(act.id),
         type="act.created",
         payload={
             "act_id": str(act.id),
@@ -165,7 +167,7 @@ async def start_workflow(
     await audit_logger.append(
         session=session,
         tenant_id=principal.tenant_id,
-        stream_id=f"act:{act_id}",
+        stream_id=stream_for_act(act_id),
         type="workflow.started",
         payload={
             "workflow_id": wf_id,
@@ -267,6 +269,91 @@ async def list_documents_of_act(
     return [DocumentRead.model_validate(d) for d in rows.scalars().all()]
 
 
+def _make_snippet(text: str, lower_needle: str, needle_len: int) -> str:
+    """Estrae ~160 char attorno al needle (case-insensitive), con ellipsi."""
+    if not text:
+        return ""
+    idx = text.lower().find(lower_needle)
+    if idx < 0:
+        return text[:160] + ("…" if len(text) > 160 else "")
+    start = max(0, idx - 60)
+    end = min(len(text), idx + needle_len + 100)
+    return (
+        ("…" if start > 0 else "")
+        + text[start:end]
+        + ("…" if end < len(text) else "")
+    )
+
+
+async def _search_input_chunks(
+    session, act_id: uuid.UUID, pattern: str, lower_needle: str, needle_len: int, limit: int
+) -> list[dict]:
+    import sqlalchemy as sa
+    from sqlalchemy import or_
+    from notai.contexts.documents.models import DocumentChunk
+
+    rows = await session.execute(
+        select(DocumentChunk, Document)
+        .join(Document, DocumentChunk.document_id == Document.id)
+        .where(
+            Document.act_id == act_id,
+            Document.kind == INPUT_SOURCE,
+            Document.deleted_at.is_(None),
+            or_(
+                DocumentChunk.text.ilike(pattern),
+                DocumentChunk.classification.cast(sa.String).ilike(pattern),
+            ),
+        )
+        .limit(limit)
+    )
+    return [
+        {
+            "kind": "input_chunk",
+            "chunk_id": str(chunk.id),
+            "document_id": str(chunk.document_id),
+            "filename": doc.filename,
+            "ordering": chunk.ordering,
+            "page_number": chunk.page_number,
+            "document_type": (chunk.classification or {}).get("document_type"),
+            "snippet": _make_snippet(chunk.text, lower_needle, needle_len),
+        }
+        for chunk, doc in rows.all()
+    ]
+
+
+async def _search_output_sections(
+    session, act_id: uuid.UUID, lower_needle: str, needle_len: int, limit: int
+) -> list[dict]:
+    docs = (
+        await session.execute(
+            select(Document).where(
+                Document.act_id == act_id,
+                Document.kind != INPUT_SOURCE,
+                Document.deleted_at.is_(None),
+                Document.sections.is_not(None),
+            )
+        )
+    ).scalars().all()
+
+    hits: list[dict] = []
+    for d in docs:
+        for section in d.sections or []:
+            text = section.get("text") or ""
+            title = section.get("title") or ""
+            if lower_needle in (text + " " + title).lower():
+                hits.append({
+                    "kind": "output_section",
+                    "document_id": str(d.id),
+                    "filename": d.filename,
+                    "section_id": section.get("id"),
+                    "section_title": section.get("title"),
+                    "snippet": _make_snippet(text, lower_needle, needle_len),
+                })
+                if len(hits) >= limit:
+                    return hits
+    return hits
+
+
 @router.get("/{act_id}/search")
 async def search_in_act(
     act_id: uuid.UUID,
@@ -277,102 +364,22 @@ async def search_in_act(
 ) -> dict:
     """Ricerca testuale (case-insensitive) su input chunks + output sections.
 
-    In Fase 5 ILIKE su Postgres; in fasi successive aggiungeremo dense retrieval
-    via Qdrant + BM25 via OpenSearch.
+    In Fase 5 ILIKE su Postgres (con indice pg_trgm); in fasi successive
+    aggiungeremo dense retrieval via Qdrant + BM25 via OpenSearch.
     """
     del principal
-    import sqlalchemy as sa
-    from sqlalchemy import or_
-
-    from notai.contexts.documents.models import DocumentChunk
-
     if (await ActRepository(session).get(act_id)) is None:
         raise HTTPException(status_code=404, detail="act not found")
     needle = (q or "").strip()
     if len(needle) < 2:
         return {"query": q, "input_hits": [], "output_hits": [], "total": 0}
 
-    pattern = f"%{needle.lower()}%"
     lower_needle = needle.lower()
+    pattern = f"%{lower_needle}%"
+    nlen = len(needle)
 
-    rows = await session.execute(
-        select(DocumentChunk, Document)
-        .join(Document, DocumentChunk.document_id == Document.id)
-        .where(
-            Document.act_id == act_id,
-            Document.kind == "input_source",
-            Document.deleted_at.is_(None),
-            or_(
-                DocumentChunk.text.ilike(pattern),
-                DocumentChunk.classification.cast(sa.String).ilike(pattern),
-            ),
-        )
-        .limit(limit)
-    )
-    input_hits: list[dict] = []
-    for chunk, doc in rows.all():
-        text = chunk.text
-        idx = text.lower().find(lower_needle)
-        if idx < 0:
-            snippet = text[:160] + ("…" if len(text) > 160 else "")
-        else:
-            start = max(0, idx - 60)
-            end = min(len(text), idx + len(needle) + 100)
-            snippet = (
-                ("…" if start > 0 else "")
-                + text[start:end]
-                + ("…" if end < len(text) else "")
-            )
-        input_hits.append({
-            "kind": "input_chunk",
-            "chunk_id": str(chunk.id),
-            "document_id": str(chunk.document_id),
-            "filename": doc.filename,
-            "ordering": chunk.ordering,
-            "page_number": chunk.page_number,
-            "document_type": (chunk.classification or {}).get("document_type"),
-            "snippet": snippet,
-        })
-
-    docs = (
-        await session.execute(
-            select(Document).where(
-                Document.act_id == act_id,
-                Document.kind != "input_source",
-                Document.deleted_at.is_(None),
-                Document.sections.is_not(None),
-            )
-        )
-    ).scalars().all()
-
-    output_hits: list[dict] = []
-    for d in docs:
-        for section in d.sections or []:
-            text = section.get("text") or ""
-            title = section.get("title") or ""
-            haystack = (text + " " + title).lower()
-            if lower_needle in haystack:
-                idx = text.lower().find(lower_needle)
-                if idx >= 0:
-                    start = max(0, idx - 60)
-                    end = min(len(text), idx + len(needle) + 100)
-                    snippet = (
-                        ("…" if start > 0 else "")
-                        + text[start:end]
-                        + ("…" if end < len(text) else "")
-                    )
-                else:
-                    snippet = text[:160] + ("…" if len(text) > 160 else "")
-                output_hits.append({
-                    "kind": "output_section",
-                    "document_id": str(d.id),
-                    "filename": d.filename,
-                    "section_id": section.get("id"),
-                    "section_title": section.get("title"),
-                    "snippet": snippet,
-                })
-                if len(output_hits) >= limit:
-                    break
+    input_hits = await _search_input_chunks(session, act_id, pattern, lower_needle, nlen, limit)
+    output_hits = await _search_output_sections(session, act_id, lower_needle, nlen, limit)
 
     return {
         "query": q,

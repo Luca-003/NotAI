@@ -147,4 +147,26 @@ class LLMInvocation(IdMixin, Base):
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-__all__ = ["AUDIT_SCHEMA", "AuditEvent", "LLMInvocation"]
+class AuditStreamHead(Base):
+    """Cache della testa della catena hash per (tenant_id, stream_id).
+
+    Esiste per evitare un index-seek su audit_events ad ogni append:
+    la row qui dentro contiene gia' (last_seq, last_hash) e viene
+    bloccata con SELECT FOR UPDATE invece dell'advisory_xact_lock globale.
+    """
+
+    __tablename__ = "audit_stream_heads"
+    __table_args__ = (
+        {"schema": AUDIT_SCHEMA},
+    )
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    stream_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    last_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    last_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[__import__("datetime").datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+__all__ = ["AUDIT_SCHEMA", "AuditEvent", "AuditStreamHead", "LLMInvocation"]

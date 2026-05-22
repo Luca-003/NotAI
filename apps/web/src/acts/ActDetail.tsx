@@ -6,6 +6,8 @@ import { apiFetch, type Session } from "../auth";
 // apiFetch usato in mutations DraftViewer (provenance confirm/remove)
 import { DocumentsWorkspace } from "./DocumentsWorkspace";
 import { LineageGraph } from "./LineageGraph";
+import { useDocumentProvenance } from "./hooks/useProvenance";
+import { card } from "../theme";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 import { s } from "../practices/PracticesPage";
@@ -527,15 +529,6 @@ type DraftSection = {
   sources?: { chunk_id: string; source_document_id: string; entity_type?: string; document_type?: string }[];
 };
 
-type ProvLink = {
-  id: string;
-  source_chunk_id: string;
-  source_document_id: string;
-  relation: string;
-  rationale: string | null;
-  confidence: number;
-};
-
 function DraftViewer({
   draft,
   token,
@@ -558,15 +551,7 @@ function DraftViewer({
       ),
   });
 
-  const provenance = useQuery({
-    queryKey: ["doc-provenance", draft.document_id],
-    queryFn: () =>
-      apiFetch<{ links_by_section: Record<string, ProvLink[]>; total_links: number }>(
-        `/v1/documents/${draft.document_id}/provenance`,
-        {},
-        token,
-      ),
-  });
+  const provenance = useDocumentProvenance(draft.document_id, token);
 
   const confirmLink = useMutation({
     mutationFn: ({ id, confirmed }: { id: string; confirmed: boolean }) =>
@@ -781,14 +766,6 @@ function DraftViewer({
     </section>
   );
 }
-
-const card: React.CSSProperties = {
-  background: "white",
-  border: "1px solid #e2e8f0",
-  borderRadius: 6,
-  padding: "1rem 1.25rem",
-  marginBottom: "1rem",
-};
 
 const partyRow: React.CSSProperties = {
   display: "flex",

@@ -3,6 +3,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { apiFetch, type Session } from "../auth";
+import {
+  useChunkReverseProvenance,
+  useReverseProvenanceCounts,
+  type ReverseProvenanceItem,
+} from "./hooks/useProvenance";
+import { card } from "../theme";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
@@ -647,16 +653,7 @@ function ChunksList({
 
   // Una sola query per tutto il documento al posto di N (una per chunk).
   // Solo i chunk con count > 0 attivano il rendering del badge.
-  const reverseCounts = useQuery({
-    queryKey: ["reverse-provenance-counts", documentId],
-    queryFn: () =>
-      apiFetch<{ counts_by_chunk: Record<string, number> }>(
-        `/v1/documents/${documentId}/reverse-provenance-counts`,
-        {},
-        session.token,
-      ),
-    staleTime: 30_000,
-  });
+  const reverseCounts = useReverseProvenanceCounts(documentId, session.token);
 
   // Auto-scroll al chunk evidenziato
   useEffect(() => {
@@ -732,15 +729,6 @@ function ChunksList({
 }
 
 
-type ReverseProvenanceItem = {
-  id: string;
-  output_document_id: string;
-  output_section_id: string;
-  relation: string;
-  rationale: string | null;
-  confidence: number;
-};
-
 function ChunkLineageBadge({
   chunkId,
   session,
@@ -752,18 +740,7 @@ function ChunkLineageBadge({
   // e niente network: skippiamo l'intera query dettaglio.
   hint: number;
 }) {
-  const reverse = useQuery({
-    queryKey: ["reverse-provenance", chunkId],
-    queryFn: () =>
-      apiFetch<{ uses: ReverseProvenanceItem[]; count: number }>(
-        `/v1/documents/chunks/${chunkId}/reverse-provenance`,
-        {},
-        session.token,
-      ),
-    staleTime: 30_000,
-    enabled: hint > 0,
-  });
-
+  const reverse = useChunkReverseProvenance(chunkId, session.token, hint > 0);
   if (hint === 0) return null;
   if (!reverse.data || reverse.data.count === 0) return null;
 
@@ -931,13 +908,7 @@ function mimeIcon(mime: string): string {
 }
 
 const styles = {
-  card: {
-    background: "white",
-    border: "1px solid #e2e8f0",
-    borderRadius: 6,
-    padding: "1rem 1.25rem",
-    marginBottom: "1rem",
-  } as React.CSSProperties,
+  card,
   title: { margin: "0 0 0.25rem 0", fontSize: "1.1rem", color: "#0f172a" },
   help: { color: "#64748b", fontSize: "0.9rem", margin: "0 0 1rem 0" },
   subtitle: { margin: "0 0 0.5rem 0", fontSize: "0.95rem", color: "#1e293b" },

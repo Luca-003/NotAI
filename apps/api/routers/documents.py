@@ -12,6 +12,8 @@ from sqlalchemy import delete, select
 
 from apps.api.deps import DbDep, TenantDep, get_or_404
 from notai.contexts.audit.logger import audit_logger
+from notai.contexts.audit.streams import stream_for_act, stream_for_practice, stream_for_provenance
+from notai.contexts.documents.kinds import INPUT_SOURCE
 from notai.contexts.documents.ingestion import ingest_document
 from notai.contexts.documents.models import Document, DocumentChunk, ProvenanceLink
 from notai.contexts.documents.storage import get_blob, parse_storage_uri, put_blob
@@ -95,7 +97,7 @@ async def upload_document(
     session: DbDep,
     background: BackgroundTasks,
     file: UploadFile = File(...),
-    kind: str = Form("input_source"),
+    kind: str = Form(INPUT_SOURCE),
     practice_id: uuid.UUID | None = Form(None),
     act_id: uuid.UUID | None = Form(None),
 ) -> DocumentRead:
@@ -155,7 +157,7 @@ async def upload_document(
     await audit_logger.append(
         session=session,
         tenant_id=principal.tenant_id,
-        stream_id=f"act:{act_id}" if act_id else f"practice:{practice_id}",
+        stream_id=stream_for_act(act_id) if act_id else stream_for_practice(practice_id),  # type: ignore[arg-type]
         type="document.uploaded",
         payload={
             "document_id": str(doc_id),
@@ -281,7 +283,7 @@ async def delete_provenance_link(
     await audit_logger.append(
         session=session,
         tenant_id=principal.tenant_id,
-        stream_id=f"provenance:{out_doc_id}",
+        stream_id=stream_for_provenance(out_doc_id),
         type="provenance.link_removed",
         payload={
             "link_id": str(link_id),
@@ -323,7 +325,7 @@ async def confirm_provenance_link(
     await audit_logger.append(
         session=session,
         tenant_id=principal.tenant_id,
-        stream_id=f"provenance:{link.output_document_id}",
+        stream_id=stream_for_provenance(link.output_document_id),
         type="provenance.link_confirmed" if payload.confirmed else "provenance.link_rejected",
         payload={"link_id": str(link_id), "section_id": link.output_section_id},
         actor=principal.as_actor(),
@@ -591,7 +593,7 @@ async def delete_document(
     await audit_logger.append(
         session=session,
         tenant_id=principal.tenant_id,
-        stream_id=f"act:{doc.act_id}" if doc.act_id else f"practice:{doc.practice_id}",
+        stream_id=stream_for_act(doc.act_id) if doc.act_id else stream_for_practice(doc.practice_id),  # type: ignore[arg-type]
         type="document.deleted",
         payload={"document_id": str(document_id), "filename": doc.filename},
         actor=principal.as_actor(),

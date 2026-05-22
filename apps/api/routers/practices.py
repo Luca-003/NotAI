@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, status
 from apps.api.deps import DbDep, TenantDep
 from apps.api.routers.acts import ActRead
 from notai.contexts.audit.logger import audit_logger
+from notai.contexts.audit.streams import stream_for_practice
 from notai.contexts.practices.acts_repository import ActRepository
 from notai.contexts.practices.repository import PracticeRepository
 from notai.contexts.practices.schemas import PracticeCreate, PracticeRead
@@ -36,7 +37,7 @@ async def create_practice(
     await audit_logger.append(
         session=session,
         tenant_id=principal.tenant_id,
-        stream_id=f"practice:{practice.id}",
+        stream_id=stream_for_practice(practice.id),
         type="practice.created",
         payload={
             "practice_id": str(practice.id),

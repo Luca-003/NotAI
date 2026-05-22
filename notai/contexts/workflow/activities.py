@@ -20,6 +20,7 @@ from temporalio import activity
 
 from notai.contexts.audit.hash_chain import canonical_json
 from notai.contexts.audit.logger import audit_logger
+from notai.contexts.audit.streams import stream_for_act
 from notai.contexts.integrations.anpr import AnprAdapter
 from notai.contexts.integrations.telemaco import TelemacoAdapter
 from notai.shared.tenancy.session import scoped_session
@@ -55,7 +56,7 @@ async def _audit(
         await audit_logger.append(
             session=session,
             tenant_id=tenant_uuid,
-            stream_id=f"act:{ctx.act_id}",
+            stream_id=stream_for_act(ctx.act_id),
             type=event_type,
             payload=payload,
             actor=ctx.actor or "temporal-worker",
@@ -192,6 +193,7 @@ async def draft_generate(req: DraftRequest) -> DraftResult:
     from minio.error import S3Error
     from sqlalchemy import select as sa_select
 
+    from notai.contexts.documents.kinds import INPUT_SOURCE
     from notai.contexts.documents.models import (
         Document,
         DocumentChunk,
@@ -226,7 +228,7 @@ async def draft_generate(req: DraftRequest) -> DraftResult:
                 .join(Document, DocumentChunk.document_id == Document.id)
                 .where(
                     Document.act_id == act_uuid,
-                    Document.kind == "input_source",
+                    Document.kind == INPUT_SOURCE,
                     Document.deleted_at.is_(None),
                 )
             )

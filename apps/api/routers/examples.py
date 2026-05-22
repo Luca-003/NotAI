@@ -19,6 +19,7 @@ from fastapi import (
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
+from notai.contexts.audit.streams import stream_for_act_example
 from notai.shared.domain.identifiers import as_uuid_or_none
 
 from apps.api.deps import DbDep, TenantDep
@@ -134,7 +135,7 @@ async def upload_example(
     await audit_logger.append(
         session=session,
         tenant_id=principal.tenant_id,
-        stream_id=f"act-example:{example.id}",
+        stream_id=stream_for_act_example(example.id),
         type="act_example.uploaded",
         payload={
             "example_id": str(example.id),
@@ -229,7 +230,7 @@ async def delete_example(
         await audit_logger.append(
             session=session,
             tenant_id=principal.tenant_id,
-            stream_id=f"act-example:{example_id}",
+            stream_id=stream_for_act_example(example_id),
             type="act_example.deleted",
             payload={"example_id": str(example_id), "title": ex.title},
             actor=principal.as_actor(),

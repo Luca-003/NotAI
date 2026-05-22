@@ -31,6 +31,7 @@ from qdrant_client.http import models as qm
 from sqlalchemy import delete, select
 
 from notai.contexts.audit.logger import audit_logger
+from notai.contexts.audit.streams import stream_for_document
 from notai.contexts.documents.models import Document, DocumentChunk
 from notai.contexts.documents.storage import get_blob, parse_storage_uri
 from notai.shared.tenancy.session import scoped_session
@@ -369,7 +370,7 @@ async def _mark_failed(
         await audit_logger.append(
             session=session,
             tenant_id=tenant_id,
-            stream_id=f"document:{document_id}",
+            stream_id=stream_for_document(document_id),
             type="document.ingestion_failed" if not skipped else "document.ingestion_skipped",
             payload={"document_id": str(document_id), "error": error},
             actor="ingestion-pipeline",

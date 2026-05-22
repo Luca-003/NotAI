@@ -27,6 +27,7 @@ from notai.contexts.ai.llm_gateway import LLMCallSpec, llm_gateway
 from notai.contexts.ai.rag import known_citations
 from notai.contexts.ai.schemas import ChunkClassification, StructuredAIOutput
 from notai.contexts.audit.logger import audit_logger
+from notai.contexts.audit.streams import stream_for_document
 from notai.contexts.documents.models import Document, DocumentChunk
 from notai.shared.tenancy.session import scoped_session
 
@@ -77,7 +78,7 @@ async def classify_chunk(
 
     spec = LLMCallSpec(
         tenant_id=tenant_id,
-        stream_id=f"document:{chunk.document_id}",
+        stream_id=stream_for_document(chunk.document_id),
         role="classification",
         system=SYSTEM_PROMPT,
         user=user,
@@ -118,7 +119,7 @@ async def classify_chunk(
     await audit_logger.append(
         session=session,
         tenant_id=tenant_id,
-        stream_id=f"document:{chunk.document_id}",
+        stream_id=stream_for_document(chunk.document_id),
         type="chunk.classification_abstained",
         payload={
             "chunk_id": str(chunk.id),
@@ -211,7 +212,7 @@ async def classify_document_chunks(
         await audit_logger.append(
             session=session,
             tenant_id=tenant_id,
-            stream_id=f"document:{document_id}",
+            stream_id=stream_for_document(document_id),
             type="document.classification_started",
             payload={"document_id": str(document_id), "chunks_count": len(chunks)},
             actor="ingestion-classifier",
@@ -244,7 +245,7 @@ async def classify_document_chunks(
         await audit_logger.append(
             session=session,
             tenant_id=tenant_id,
-            stream_id=f"document:{document_id}",
+            stream_id=stream_for_document(document_id),
             type="document.classification_completed",
             payload={
                 "document_id": str(document_id),
