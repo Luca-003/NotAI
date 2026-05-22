@@ -177,6 +177,16 @@ export function ActDetail({
   );
 }
 
+type TemplateSummary = {
+  id: string;
+  name: string;
+  category: string;
+  subcategory: string | null;
+  description: string;
+  tags: string[];
+  section_count: number;
+};
+
 function StartWorkflowForm({
   session,
   actId,
@@ -188,6 +198,17 @@ function StartWorkflowForm({
   onStarted: () => void;
   onCancel: () => void;
 }) {
+  const templates = useQuery({
+    queryKey: ["templates"],
+    queryFn: () =>
+      apiFetch<{ grouped: Record<string, TemplateSummary[]>; templates: TemplateSummary[] }>(
+        "/v1/templates",
+        {},
+        session.token,
+      ),
+    staleTime: 60_000,
+  });
+
   const [parties, setParties] = useState<Party[]>([
     { role: "venditore", kind: "PF", fiscal_code: "RSSMRA70A01F205X" },
     { role: "acquirente", kind: "PF", fiscal_code: "BNCLCA85B05H501Y" },
@@ -195,6 +216,9 @@ function StartWorkflowForm({
   const [baseImponibile, setBaseImponibile] = useState(250000);
   const [isPrimaCasa, setIsPrimaCasa] = useState(true);
   const [templateId, setTemplateId] = useState("notarile.compravendita.immobiliare:v1");
+
+  const selectedTemplate = templates.data?.templates.find((t) => t.id === templateId);
+  const isNotarile = templateId.startsWith("notarile.");
 
   const start = useMutation({
     mutationFn: () =>
@@ -226,12 +250,34 @@ function StartWorkflowForm({
     <section style={card}>
       <h3 style={{ marginTop: 0 }}>Avvia workflow</h3>
       <div style={s.formGrid}>
-        <label style={s.field}>
-          <span style={s.fieldLabel}>Template ID</span>
-          <input value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={s.input} />
+        <label style={{ ...s.field, gridColumn: "1 / -1" }}>
+          <span style={s.fieldLabel}>Template atto</span>
+          <select
+            value={templateId}
+            onChange={(e) => setTemplateId(e.target.value)}
+            style={s.input}
+          >
+            {templates.isLoading && <option>Carico template…</option>}
+            {templates.data && Object.entries(templates.data.grouped).map(([cat, tlist]) => (
+              <optgroup key={cat} label={cat.toUpperCase()}>
+                {tlist.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.id})
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          {selectedTemplate && (
+            <span style={{ fontSize: "0.8rem", color: "#64748b", marginTop: "0.25rem" }}>
+              {selectedTemplate.description} · {selectedTemplate.section_count} sezioni
+            </span>
+          )}
         </label>
         <label style={s.field}>
-          <span style={s.fieldLabel}>Base imponibile (EUR)</span>
+          <span style={s.fieldLabel}>
+            {isNotarile ? "Base imponibile (EUR)" : "Valore causa / credito (EUR)"}
+          </span>
           <input
             type="number"
             value={baseImponibile}
@@ -239,17 +285,19 @@ function StartWorkflowForm({
             style={s.input}
           />
         </label>
-        <label style={{ ...s.field, alignSelf: "end" }}>
-          <span style={s.fieldLabel}>
-            <input
-              type="checkbox"
-              checked={isPrimaCasa}
-              onChange={(e) => setIsPrimaCasa(e.target.checked)}
-              style={{ marginRight: "0.4rem" }}
-            />
-            prima casa
-          </span>
-        </label>
+        {isNotarile && (
+          <label style={{ ...s.field, alignSelf: "end" }}>
+            <span style={s.fieldLabel}>
+              <input
+                type="checkbox"
+                checked={isPrimaCasa}
+                onChange={(e) => setIsPrimaCasa(e.target.checked)}
+                style={{ marginRight: "0.4rem" }}
+              />
+              prima casa
+            </span>
+          </label>
+        )}
       </div>
 
       <h4 style={{ marginBottom: "0.5rem" }}>Parti</h4>

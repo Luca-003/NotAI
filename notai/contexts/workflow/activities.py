@@ -139,131 +139,41 @@ async def visura_anpr(req: VisuraRequest) -> VisuraResult:
 
 
 def _build_act_sections(template_id: str, slots: dict) -> list[dict]:
-    """Genera la struttura dell'atto in sezioni indipendenti.
+    """Genera la struttura dell'atto dal template registry (file YAML).
 
-    Ogni sezione ha:
-      - id: identificatore stabile (parties, visure, premesse, art_1, ...)
-      - title: titolo umano-leggibile
-      - text: contenuto markdown
-      - relies_on: descrittore semantico delle informazioni di cui ha bisogno
-        (es. "person_name", "address", "amount", "immobile_cadastral")
-        usato dalla provenance euristica per linkare ai chunk sorgente.
-
-    Tutti i numeri (importi, date) provengono dagli slots - mai inventati.
+    Il template definisce sezioni, titoli, testo, relies_on. Se il template_id
+    non e' nel registry, ritorna fallback minimo (header + parti) per non
+    bloccare il workflow ma segnalando errore in audit.
     """
-    parties = slots.get("parties") or []
-    base = slots.get("base_imponibile")
-    visure_summaries = slots.get("visure_summaries") or []
+    from notai.contexts.drafting.registry import get_template
 
-    today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
+    enriched = dict(slots)
+    enriched["template_id"] = template_id
+    enriched["today"] = datetime.now(timezone.utc).strftime("%d/%m/%Y")
 
-    parties_md = "\n".join(
-        f"- **{p.get('role','-')}** (`{p.get('kind','-')}`): "
-        f"CF/PIVA `{p.get('fiscal_code') or p.get('vat') or '—'}`"
-        for p in parties
-    ) or "_(nessuna parte indicata)_"
+    tpl = get_template(template_id)
+    if tpl is not None:
+        return tpl.render_sections(enriched)
 
-    visure_md = "\n".join(
-        f"- **{v.get('source')}** — {v.get('summary') or '(dati non disponibili)'} "
-        f"`hash: {(v.get('hash') or '')[:12]}…`"
-        for v in visure_summaries
-    ) or "_(nessuna visura)_"
-
-    base_str = (
-        f'{base:,.2f}'.replace(',', '.') if isinstance(base, (int, float)) else '—'
-    )
-
+    logger.warning("notai.draft.template_not_found", template_id=template_id)
     return [
         {
             "id": "header",
             "title": "Intestazione",
             "text": (
-                f"**Bozza atto** — `{template_id}`  \n"
-                f"Stato: bozza in attesa di review del notaio.  \n"
-                f"Data redazione: {today}"
+                f"**Bozza atto** — `{template_id}` (template non trovato nel registry).\n\n"
+                "Il documento verra' completato manualmente."
             ),
             "relies_on": [],
         },
         {
             "id": "parties",
             "title": "Parti",
-            "text": parties_md,
+            "text": "\n".join(
+                f"- **{p.get('role','-')}**: {p.get('fiscal_code') or p.get('vat') or '—'}"
+                for p in (slots.get("parties") or [])
+            ) or "_(nessuna parte)_",
             "relies_on": ["person_name", "fiscal_code", "company_name", "vat_number"],
-        },
-        {
-            "id": "visure",
-            "title": "Visure pre-atto",
-            "text": visure_md,
-            "relies_on": ["address", "immobile_cadastral"],
-        },
-        {
-            "id": "premesse",
-            "title": "Premesso che",
-            "text": (
-                "a) Le parti dichiarano di essere a conoscenza dei reciproci dati "
-                "anagrafici come risultanti dalle visure acquisite a cura del notaio "
-                "rogante;\n\n"
-                "b) il presente atto e' redatto in conformita' al modello standard "
-                f"`{template_id}` e dovra' essere riletto e firmato dinanzi al notaio;\n\n"
-                f"c) il corrispettivo / valore di riferimento e' pari a EUR **{base_str}**."
-            ),
-            "relies_on": ["amount", "person_name"],
-        },
-        {
-            "id": "art_1",
-            "title": "Articolo 1 — Oggetto",
-            "text": "[Da completare in fase di review: descrizione dell'oggetto dell'atto.]",
-            "relies_on": ["immobile_cadastral", "address"],
-        },
-        {
-            "id": "art_2",
-            "title": "Articolo 2 — Prezzo / valore",
-            "text": (
-                "Le parti dichiarano che il valore di riferimento e' quello indicato in premessa."
-            ),
-            "relies_on": ["amount"],
-        },
-        {
-            "id": "art_3",
-            "title": "Articolo 3 — Garanzie e dichiarazioni",
-            "text": (
-                "I dichiaranti, ai sensi e per gli effetti di cui all'art. 1490 c.c. "
-                "e seguenti, garantiscono la conformita' del bene oggetto del presente atto. "
-                "La parte trasferente dichiara che il bene e' libero da pesi pregiudizievoli, "
-                "salvo quanto eventualmente risultante dalle visure ipo-catastali allegate."
-            ),
-            "relies_on": ["immobile_cadastral"],
-        },
-        {
-            "id": "art_4",
-            "title": "Articolo 4 — Trascrizione",
-            "text": (
-                "Il presente atto sara' trascritto nei pubblici registri ai sensi dell'art. "
-                "2643 c.c. a cura del notaio rogante."
-            ),
-            "relies_on": [],
-        },
-        {
-            "id": "art_5",
-            "title": "Articolo 5 — Imposte",
-            "text": (
-                "Per gli aspetti fiscali si rinvia al prospetto di calcolo delle imposte "
-                "allegato (registro / ipotecaria / catastale), determinate ai sensi del "
-                "DPR 131/1986 e del D.Lgs 347/1990."
-            ),
-            "relies_on": ["amount"],
-        },
-        {
-            "id": "note_tecniche",
-            "title": "Note tecniche per il notaio",
-            "text": (
-                "Questo testo e' una bozza preliminare prodotta da NotAI sulla base del "
-                f"template `{template_id}` e dei dati raccolti tramite visure automatiche "
-                "e dei documenti caricati dal notaio.\n\nLe parti sostanziali (oggetto, "
-                "prezzo definitivo, clausole specifiche) DEVONO essere completate e "
-                "validate dal notaio prima della firma."
-            ),
-            "relies_on": [],
         },
     ]
 

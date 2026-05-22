@@ -1,0 +1,99 @@
+# Template atto: atto di citazione civile (legale)
+id: "legale.civile.atto_citazione:v1"
+name: "Atto di citazione civile"
+category: "legale"
+subcategory: "civile"
+description: >-
+  Atto introduttivo del giudizio civile di cognizione ordinaria (art. 163
+  c.p.c.). Da depositare via PCT presso il Tribunale competente.
+requires_modules:
+  - "legale.fascicolo"
+tags: ["civile", "citazione", "PCT"]
+slot_schema:
+  parties:
+    type: "array"
+    required: true
+    roles: ["attore", "convenuto"]
+  valore_causa:
+    type: "number"
+    required: false
+workflow_skip_steps:
+  - "tax_calculate"     # non si applica imposta di registro/ipo/cat agli atti giudiziari
+
+sections:
+  - id: "header"
+    title: "Intestazione"
+    relies_on: []
+    text: |
+      **Atto di citazione** — `{template_id}`
+
+      Stato: bozza in attesa di revisione dell'avvocato.
+
+  - id: "intestazione_tribunale"
+    title: "TRIBUNALE ORDINARIO DI [SEDE]"
+    relies_on: []
+    text: |
+      [Da completare: tribunale competente, sezione, numero R.G. se gia' assegnato.]
+
+  - id: "parties"
+    title: "Parti"
+    relies_on: ["person_name", "fiscal_code", "company_name", "vat_number", "address"]
+    text: |
+      {parties_md}
+
+  - id: "premessa_fattuale"
+    title: "FATTO"
+    relies_on: ["date", "amount", "address"]
+    text: |
+      [Esposizione dei fatti di causa, in ordine cronologico, con riferimento ai
+      documenti caricati nel fascicolo. Da completare a cura dell'avvocato.]
+
+  - id: "diritto"
+    title: "DIRITTO"
+    relies_on: []
+    text: |
+      [Inquadramento giuridico della controversia, norme applicabili (es. art.
+      1218 c.c. responsabilita' contrattuale, art. 2043 c.c. extracontrattuale),
+      precedenti giurisprudenziali rilevanti.]
+
+  - id: "domande"
+    title: "CONCLUSIONI"
+    relies_on: ["amount"]
+    text: |
+      [In via principale: ...
+
+       In via subordinata: ...
+
+       Con vittoria di spese, diritti e onorari di causa.]
+
+  - id: "valore_causa"
+    title: "Valore della causa"
+    relies_on: ["amount"]
+    text: |
+      Ai fini del contributo unificato e del DM 55/2014, il valore della
+      controversia e' indicato in EUR **{base_imponibile_fmt}**.
+
+  - id: "vocatio_in_ius"
+    title: "VOCATIO IN IUS"
+    relies_on: []
+    text: |
+      Si invita e si cita la parte convenuta a comparire davanti al Tribunale
+      adito all'udienza che verra' fissata con decreto del giudice istruttore,
+      ai sensi degli artt. 163 e seguenti del codice di procedura civile, con
+      l'avvertimento che la costituzione oltre 70 giorni prima dell'udienza
+      comporta le decadenze di cui agli artt. 38 e 167 c.p.c.
+
+  - id: "elenco_allegati"
+    title: "Elenco allegati"
+    relies_on: []
+    text: |
+      Si producono i seguenti documenti (caricati nel fascicolo):
+      [Lista a cura dell'avvocato dei documenti rilevanti tra quelli ingeriti.]
+
+  - id: "note_tecniche"
+    title: "Note tecniche"
+    relies_on: []
+    text: |
+      Bozza prodotta da NotAI per accelerare la redazione. L'avvocato deve
+      validare la qualificazione giuridica, completare l'esposizione di fatto
+      e diritto, e selezionare i documenti allegati prima del deposito PCT.

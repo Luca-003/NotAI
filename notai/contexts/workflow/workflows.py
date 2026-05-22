@@ -163,19 +163,24 @@ class AtoWorkflow:
         }
         self._state.status = WorkflowStatus.DRAFT_GENERATED.value
 
-        # 3) Calcolo imposte
-        tax = await workflow.execute_activity(
-            tax_calculate,
-            TaxCalculationRequest(
-                ctx=ctx,
-                act_kind=input.template_id,
-                base_imponibile=input.base_imponibile,
-                is_prima_casa=input.is_prima_casa,
-            ),
-            start_to_close_timeout=timedelta(seconds=10),
-            retry_policy=retry,
-        )
-        self._state.tax = {"items": tax.items, "total": tax.total}
+        # 3) Calcolo imposte (skippato per atti non-notarili come citazioni/decreti)
+        # Determiniamo dal template_id se applicabile: legale.* / atti giudiziari skip.
+        is_notarile = input.template_id.startswith("notarile.")
+        if is_notarile:
+            tax = await workflow.execute_activity(
+                tax_calculate,
+                TaxCalculationRequest(
+                    ctx=ctx,
+                    act_kind=input.template_id,
+                    base_imponibile=input.base_imponibile,
+                    is_prima_casa=input.is_prima_casa,
+                ),
+                start_to_close_timeout=timedelta(seconds=10),
+                retry_policy=retry,
+            )
+            self._state.tax = {"items": tax.items, "total": tax.total}
+        else:
+            self._state.tax = None
         self._state.status = WorkflowStatus.TAX_CALCULATED.value
 
         # 4) Apri HumanTask di review

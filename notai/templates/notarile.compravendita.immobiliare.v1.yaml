@@ -1,0 +1,109 @@
+# Template atto: compravendita immobiliare (notarile)
+# Caricato a startup dal registry in notai/contexts/drafting/registry.py
+# Modificabile senza redeploy: basta toccare questo file e chiamare
+# POST /api/v1/templates/reload (TODO endpoint admin)
+
+id: "notarile.compravendita.immobiliare:v1"
+name: "Compravendita immobiliare (prima casa o ordinaria)"
+category: "notarile"
+subcategory: "compravendita"
+description: >-
+  Atto pubblico di trasferimento della proprieta' di unita' immobiliare
+  residenziale. Supporta agevolazioni prima casa.
+requires_modules:
+  - "notaio.workflow"
+  - "notaio.tax_calculator"
+tags: ["compravendita", "immobile", "prima_casa"]
+slot_schema:
+  parties:
+    type: "array"
+    required: true
+    roles: ["venditore", "acquirente"]
+  base_imponibile:
+    type: "number"
+    required: true
+  is_prima_casa:
+    type: "boolean"
+    required: true
+workflow_skip_steps: []
+
+sections:
+  - id: "header"
+    title: "Intestazione"
+    relies_on: []
+    text: |
+      **Bozza atto** — `{template_id}`
+
+      Stato: bozza in attesa di review del notaio.
+
+  - id: "parties"
+    title: "Parti"
+    relies_on: ["person_name", "fiscal_code", "company_name", "vat_number"]
+    text: |
+      {parties_md}
+
+  - id: "visure"
+    title: "Visure pre-atto"
+    relies_on: ["address", "immobile_cadastral"]
+    text: |
+      {visure_md}
+
+  - id: "premesse"
+    title: "Premesso che"
+    relies_on: ["amount", "person_name"]
+    text: |
+      a) Le parti dichiarano di essere a conoscenza dei reciproci dati anagrafici
+         come risultanti dalle visure acquisite a cura del notaio rogante;
+
+      b) il presente atto e' redatto in conformita' al modello standard
+         `{template_id}` e dovra' essere riletto e firmato dinanzi al notaio;
+
+      c) il corrispettivo / valore di riferimento e' pari a EUR
+         **{base_imponibile_fmt}**.
+
+  - id: "art_1"
+    title: "Articolo 1 — Oggetto"
+    relies_on: ["immobile_cadastral", "address"]
+    text: |
+      [Da completare in fase di review: descrizione dell'oggetto dell'atto.]
+
+  - id: "art_2"
+    title: "Articolo 2 — Prezzo / valore"
+    relies_on: ["amount"]
+    text: |
+      Le parti dichiarano che il valore di riferimento e' quello indicato in premessa.
+
+  - id: "art_3"
+    title: "Articolo 3 — Garanzie e dichiarazioni"
+    relies_on: ["immobile_cadastral"]
+    text: |
+      I dichiaranti, ai sensi e per gli effetti di cui all'art. 1490 c.c. e
+      seguenti, garantiscono la conformita' del bene oggetto del presente atto.
+      La parte trasferente dichiara che il bene e' libero da pesi pregiudizievoli,
+      salvo quanto eventualmente risultante dalle visure ipo-catastali allegate.
+
+  - id: "art_4"
+    title: "Articolo 4 — Trascrizione"
+    relies_on: []
+    text: |
+      Il presente atto sara' trascritto nei pubblici registri ai sensi dell'art.
+      2643 c.c. a cura del notaio rogante.
+
+  - id: "art_5"
+    title: "Articolo 5 — Imposte"
+    relies_on: ["amount"]
+    text: |
+      Per gli aspetti fiscali si rinvia al prospetto di calcolo delle imposte
+      allegato (registro / ipotecaria / catastale), determinate ai sensi del
+      DPR 131/1986 e del D.Lgs 347/1990.
+
+  - id: "note_tecniche"
+    title: "Note tecniche per il notaio"
+    relies_on: []
+    text: |
+      Questo testo e' una bozza preliminare prodotta da NotAI sulla base del
+      template `{template_id}` e dei dati raccolti tramite visure automatiche
+      e dei documenti caricati dal notaio.
+
+      Le parti sostanziali (oggetto, prezzo definitivo, clausole specifiche)
+      DEVONO essere completate e validate dal notaio prima della firma.

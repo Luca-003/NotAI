@@ -1,0 +1,88 @@
+# Template atto: ricorso per decreto ingiuntivo (legale)
+id: "legale.civile.decreto_ingiuntivo:v1"
+name: "Ricorso per decreto ingiuntivo"
+category: "legale"
+subcategory: "civile"
+description: >-
+  Ricorso ex artt. 633 ss. c.p.c. per ingiunzione di pagamento di somma
+  liquida ed esigibile, con deposito telematico via PCT.
+requires_modules:
+  - "legale.fascicolo"
+tags: ["civile", "decreto_ingiuntivo", "PCT", "recupero_crediti"]
+slot_schema:
+  parties:
+    type: "array"
+    required: true
+    roles: ["ricorrente", "ingiungendo"]
+workflow_skip_steps:
+  - "tax_calculate"
+
+sections:
+  - id: "header"
+    title: "Intestazione"
+    relies_on: []
+    text: |
+      **Ricorso per decreto ingiuntivo** — `{template_id}`
+
+  - id: "intestazione_tribunale"
+    title: "TRIBUNALE ORDINARIO DI [SEDE]"
+    relies_on: []
+    text: |
+      [Tribunale competente per valore e territorio. Da completare.]
+
+  - id: "parties"
+    title: "Parti"
+    relies_on: ["person_name", "fiscal_code", "company_name", "vat_number", "address"]
+    text: |
+      {parties_md}
+
+  - id: "premessa_fattuale"
+    title: "FATTO"
+    relies_on: ["date", "amount", "iban"]
+    text: |
+      [Esposizione del rapporto da cui deriva il credito (fatture, contratto,
+      cambiale, ecc.), con riferimento ai documenti probatori caricati nel
+      fascicolo. Indicare data di scadenza e attivita' di sollecito.]
+
+  - id: "diritto"
+    title: "DIRITTO"
+    relies_on: []
+    text: |
+      Il credito e' liquido, esigibile e provato per iscritto, ricorrendo
+      pertanto i presupposti di cui all'art. 633 c.p.c. per l'emissione del
+      decreto ingiuntivo. Si chiede la concessione della provvisoria esecutivita'
+      ex art. 642 c.p.c. ricorrendone i presupposti.
+
+  - id: "domanda"
+    title: "P.Q.M."
+    relies_on: ["amount"]
+    text: |
+      Voglia l'Ill.mo Tribunale, riconosciuti i presupposti di legge, emettere
+      decreto ingiuntivo a carico della parte convenuta per il pagamento della
+      somma di EUR **{base_imponibile_fmt}**, oltre interessi legali / di mora
+      ex D.Lgs 231/2002 dalla scadenza al saldo, spese e competenze di procedura.
+
+      Si chiede inoltre, ricorrendone i presupposti, la provvisoria esecutivita'
+      del provvedimento ex art. 642 c.p.c.
+
+  - id: "elenco_allegati"
+    title: "Elenco allegati"
+    relies_on: []
+    text: |
+      [Lista documenti probatori del credito: fatture, contratto, estratto
+      conto, sollecito di pagamento con prova di ricezione, ecc.]
+
+  - id: "contributo_unificato"
+    title: "Dichiarazione di valore"
+    relies_on: ["amount"]
+    text: |
+      Ai fini del contributo unificato, il valore della causa e' fissato in
+      EUR **{base_imponibile_fmt}** (scaglione applicabile da determinare).
+
+  - id: "note_tecniche"
+    title: "Note tecniche"
+    relies_on: []
+    text: |
+      Bozza prodotta da NotAI. L'avvocato deve verificare: (a) prova scritta del
+      credito sufficiente per il rito monitorio, (b) calcolo interessi corretto
+      al momento del deposito, (c) competenza territoriale.
