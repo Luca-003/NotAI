@@ -10,7 +10,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import delete, select
 
-from apps.api.deps import DbDep, TenantDep
+from apps.api.deps import DbDep, TenantDep, get_or_404
 from notai.contexts.audit.logger import audit_logger
 from notai.contexts.documents.ingestion import ingest_document
 from notai.contexts.documents.models import Document, DocumentChunk, ProvenanceLink
@@ -81,12 +81,7 @@ async def _run_ingestion_safely(document_id: uuid.UUID, tenant_id: uuid.UUID) ->
 
 
 async def _load_doc(session, doc_id: uuid.UUID) -> Document:
-    doc = (
-        await session.execute(select(Document).where(Document.id == doc_id))
-    ).scalar_one_or_none()
-    if doc is None:
-        raise HTTPException(status_code=404, detail="document not found")
-    return doc
+    return await get_or_404(session, Document, doc_id, name="document")
 
 
 # ---------------------------------------------------------------------------

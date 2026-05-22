@@ -8,12 +8,15 @@ controllo modulo abilitato per il tenant.
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, AsyncIterator
+from typing import Annotated, AsyncIterator, TypeVar
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from notai.shared.tenancy.session import scoped_session
+
+T = TypeVar("T")
 
 
 class TenantPrincipal:
@@ -52,3 +55,29 @@ async def get_db_session(
 # Type aliases per i type hint nei router
 TenantDep = Annotated[TenantPrincipal, Depends(get_tenant_principal)]
 DbDep = Annotated[AsyncSession, Depends(get_db_session)]
+
+
+async def get_or_404(
+    session: AsyncSession,
+    model: type[T],
+    entity_id: uuid.UUID,
+    *,
+    name: str | None = None,
+) -> T:
+    """Carica un'entita' per ID o solleva 404.
+
+    Rimpiazza il pattern ripetuto:
+        e = await repo.get(id); if e is None: raise HTTPException(404, "X not found")
+    presente in 13+ posti tra acts/practices/documents/examples.
+
+    NB: assume che il modello abbia un attributo `id`. Tutti i nostri modelli
+    ereditano da IdMixin, quindi vero ovunque.
+    """
+    id_col = getattr(model, "id")
+    obj = (await session.execute(select(model).where(id_col == entity_id))).scalar_one_or_none()
+    if obj is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{name or model.__name__.lower()} not found",
+        )
+    return obj

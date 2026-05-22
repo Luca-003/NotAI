@@ -81,14 +81,16 @@ export function DocumentsWorkspace({
   const [highlightChunkId, setHighlightChunkId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Quando arriva una selectedSource dal DraftViewer, apri il documento sorgente
-  // e segna il chunk da evidenziare.
+  // Quando arriva una selectedSource dal DraftViewer, apri il documento sorgente,
+  // segna il chunk da evidenziare, poi "consuma" il comando avvisando il parent.
+  // Senza onClearSelection, click ripetuto sulla stessa fonte non rieffettua l'azione.
   useEffect(() => {
     if (selectedSource) {
       setSelectedId(selectedSource.documentId);
       setHighlightChunkId(selectedSource.chunkId);
+      onClearSelection?.();
     }
-  }, [selectedSource]);
+  }, [selectedSource, onClearSelection]);
 
   const docs = useQuery({
     queryKey: ["docs", actId],

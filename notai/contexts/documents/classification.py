@@ -15,6 +15,7 @@ Politica di abstention:
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -30,6 +31,10 @@ from notai.contexts.documents.models import Document, DocumentChunk
 from notai.shared.tenancy.session import scoped_session
 
 logger = structlog.get_logger(__name__)
+
+# Concorrenza massima delle call LLM di classificazione: vLLM/Ollama gestiscono
+# bene 4-8 inflight; sopra rischiamo OOM o rate-limit su gateway esterni.
+CLASSIFY_CONCURRENCY = 5
 
 SYSTEM_PROMPT = (
     "Sei un classificatore di documenti per uno studio notarile italiano. "
@@ -56,8 +61,13 @@ async def classify_chunk(
     tenant_id: uuid.UUID,
     chunk: DocumentChunk,
     document_filename: str,
+    citations_in_kb: set[str] | None = None,
 ) -> ChunkClassification | None:
-    """Una call LLM per chunk. Ritorna l'output parsato o None se abstain/error."""
+    """Una call LLM per chunk. Ritorna l'output parsato o None se abstain/error.
+
+    `citations_in_kb`: se non passato, lo carichiamo qui (lento perche' fa una
+    query ogni volta). Il chiamante batch DOVREBBE pre-caricarlo una volta sola.
+    """
     user = (
         f"FILE SORGENTE: {document_filename}\n"
         f"CHUNK #{chunk.ordering}"
@@ -83,11 +93,11 @@ async def classify_chunk(
 
     # Abstention detector: per i chunk NON richiediamo citation obbligatoria
     # (e' una classificazione, non una asserzione giuridica).
-    from notai.contexts.ai.schemas import StructuredAIOutput as _SAIO
+    if citations_in_kb is None:
+        citations_in_kb = await known_citations()
 
-    citations_in_kb = await known_citations()
     decision = evaluate(
-        output=parsed if isinstance(parsed, _SAIO) else None,
+        output=parsed if isinstance(parsed, StructuredAIOutput) else None,
         input_context=chunk.text,
         known_citations=citations_in_kb,
         requires_citations=False,           # classificazione non richiede norme
@@ -122,16 +132,62 @@ async def classify_chunk(
     return None
 
 
+async def _classify_one_in_own_session(
+    chunk_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    document_filename: str,
+    citations_in_kb: set[str],
+    sem: asyncio.Semaphore,
+) -> str:
+    """Classifica UN chunk in una sessione propria. Ritorna l'esito finale:
+    'classified' | 'abstained' | 'failed' | 'skipped' | 'missing'.
+
+    Sessione separata per chunk = sicuro per concorrenza (sqlalchemy async
+    session non e' thread/task safe condivisa). Il semaphore limita le call
+    LLM in volo per non saturare il gateway.
+    """
+    async with sem:
+        async with scoped_session(tenant_id) as s:
+            chunk = (
+                await s.execute(select(DocumentChunk).where(DocumentChunk.id == chunk_id))
+            ).scalar_one_or_none()
+            if chunk is None:
+                return "missing"
+            if chunk.classification_status == "done":
+                return "skipped"
+
+            chunk.classification_status = "in_progress"
+            try:
+                result = await classify_chunk(
+                    s,
+                    tenant_id=tenant_id,
+                    chunk=chunk,
+                    document_filename=document_filename,
+                    citations_in_kb=citations_in_kb,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.exception("notai.classify.chunk_failed", chunk_id=str(chunk_id))
+                chunk.classification_status = "failed"
+                chunk.classification = {"error": f"{type(e).__name__}: {e}"}
+                chunk.classified_at = datetime.now(timezone.utc)
+                return "failed"
+
+            chunk.classified_at = datetime.now(timezone.utc)
+            if result is None:
+                chunk.classification_status = "abstained"
+                chunk.classification = {"abstained": True}
+                return "abstained"
+            chunk.classification_status = "done"
+            chunk.classification = result.model_dump()
+            return "classified"
+
+
 async def classify_document_chunks(
     document_id: uuid.UUID, tenant_id: uuid.UUID
 ) -> dict:
     """Classifica tutti i chunk di un documento. Idempotente: salta chunk gia'
-    in status='done'.
+    in status='done'. Le call LLM girano in parallelo (sem=CLASSIFY_CONCURRENCY).
     """
-    classified = 0
-    abstained = 0
-    skipped = 0
-
     async with scoped_session(tenant_id) as session:
         doc = (
             await session.execute(select(Document).where(Document.id == document_id))
@@ -142,12 +198,11 @@ async def classify_document_chunks(
         chunks = (
             (
                 await session.execute(
-                    select(DocumentChunk)
+                    select(DocumentChunk.id, DocumentChunk.classification_status)
                     .where(DocumentChunk.document_id == document_id)
                     .order_by(DocumentChunk.ordering.asc())
                 )
             )
-            .scalars()
             .all()
         )
         if not chunks:
@@ -161,35 +216,30 @@ async def classify_document_chunks(
             payload={"document_id": str(document_id), "chunks_count": len(chunks)},
             actor="ingestion-classifier",
         )
+        document_filename = doc.filename
 
-        for chunk in chunks:
-            if chunk.classification_status == "done":
-                skipped += 1
-                continue
-            chunk.classification_status = "in_progress"
-            try:
-                result = await classify_chunk(
-                    session,
-                    tenant_id=tenant_id,
-                    chunk=chunk,
-                    document_filename=doc.filename,
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.exception("notai.classify.chunk_failed", chunk_id=str(chunk.id))
-                chunk.classification_status = "failed"
-                chunk.classification = {"error": f"{type(e).__name__}: {e}"}
-                chunk.classified_at = datetime.now(timezone.utc)
-                continue
+    # Citations caricate una sola volta (era N volte, una per chunk).
+    citations_in_kb = await known_citations()
+    sem = asyncio.Semaphore(CLASSIFY_CONCURRENCY)
+    outcomes = await asyncio.gather(
+        *(
+            _classify_one_in_own_session(
+                chunk_id=row[0],
+                tenant_id=tenant_id,
+                document_filename=document_filename,
+                citations_in_kb=citations_in_kb,
+                sem=sem,
+            )
+            for row in chunks
+        ),
+        return_exceptions=False,
+    )
 
-            chunk.classified_at = datetime.now(timezone.utc)
-            if result is None:
-                chunk.classification_status = "abstained"
-                chunk.classification = {"abstained": True}
-                abstained += 1
-            else:
-                chunk.classification_status = "done"
-                chunk.classification = result.model_dump()
-                classified += 1
+    classified = sum(1 for o in outcomes if o == "classified")
+    abstained = sum(1 for o in outcomes if o == "abstained")
+    skipped = sum(1 for o in outcomes if o == "skipped")
+
+    async with scoped_session(tenant_id) as session:
 
         await audit_logger.append(
             session=session,

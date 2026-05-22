@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import (
     APIRouter,
@@ -18,6 +18,8 @@ from fastapi import (
 )
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
+
+from notai.shared.domain.identifiers import as_uuid_or_none
 
 from apps.api.deps import DbDep, TenantDep
 from notai.contexts.audit.logger import audit_logger
@@ -120,7 +122,7 @@ async def upload_example(
         tags=tags_list,
         source="manual_upload",
         source_url=source_url,
-        uploaded_by=uuid.UUID(principal.user_id) if principal.user_id and len(principal.user_id) == 36 else None,
+        uploaded_by=as_uuid_or_none(principal.user_id),
         license=license,
         is_anonymized=is_anonymized,
         sha256=sha,
@@ -223,7 +225,7 @@ async def delete_example(
     if ex is None:
         raise HTTPException(status_code=404, detail="example not found")
     if ex.deleted_at is None:
-        ex.deleted_at = datetime.now(__import__("datetime").timezone.utc)
+        ex.deleted_at = datetime.now(timezone.utc)
         await audit_logger.append(
             session=session,
             tenant_id=principal.tenant_id,

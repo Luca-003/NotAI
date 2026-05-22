@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from notai.contexts.audit.logger import audit_logger
 from notai.contexts.modules.models import FeatureFlag
+from notai.shared.domain.identifiers import as_uuid_or_none
 from notai.contexts.modules.registry import (
     Module,
     all_modules,
@@ -117,7 +118,7 @@ async def set_enabled(
             f"module '{module_id}' is essential and cannot be disabled"
         )
 
-    changed_by = uuid.UUID(actor) if actor and len(actor) == 36 else None
+    changed_by = as_uuid_or_none(actor)
 
     ff = (
         await session.execute(
