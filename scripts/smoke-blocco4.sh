@@ -40,8 +40,8 @@ DOC=$(curl -fsS -X POST "$API/api/v1/documents" -H "Authorization: Bearer $TOK" 
 DID=$(echo "$DOC" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
 echo "  doc=$DID"
 
-log "Attendo ingestion + classification (max 90s)"
-for i in $(seq 1 45); do
+log "Attendo ingestion + classification (max 5 min - LLM locale puo' essere lento)"
+for i in $(seq 1 150); do
   sleep 2
   CS=$(curl -fsS "$API/api/v1/documents/$DID/chunks" -H "Authorization: Bearer $TOK" \
     | python3 -c "import sys,json;d=json.load(sys.stdin);print(d[0]['classification_status'] if d else '-')")
