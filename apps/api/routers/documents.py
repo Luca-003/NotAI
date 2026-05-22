@@ -64,6 +64,9 @@ class ChunkRead(BaseModel):
     page_number: int | None
     embedding_indexed: bool
     token_count: int | None
+    classification: dict | None
+    classification_status: str
+    classified_at: datetime | None
 
 
 async def _run_ingestion_safely(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
@@ -246,6 +249,65 @@ async def list_document_chunks(
         .order_by(DocumentChunk.ordering.asc())
     )
     return [ChunkRead.model_validate(c) for c in rows.scalars().all()]
+
+
+@router.get("/{document_id}/classification")
+async def get_document_classification_summary(
+    document_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> dict:
+    """Aggregato della classificazione di tutti i chunk del documento.
+
+    Restituisce:
+      - document_type "dominante" (piu' frequente tra i chunk classificati)
+      - lista unica di entita' estratte (dedup per (type,value))
+      - tag aggregati
+      - statistiche per stato
+    """
+    del principal
+    await _load_doc(session, document_id)
+    rows = await session.execute(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.ordering.asc())
+    )
+    chunks = list(rows.scalars().all())
+
+    status_counts: dict[str, int] = {}
+    type_counts: dict[str, int] = {}
+    entities: dict[tuple[str, str], dict] = {}
+    tags: set[str] = set()
+    summaries: list[str] = []
+
+    for c in chunks:
+        status_counts[c.classification_status] = status_counts.get(c.classification_status, 0) + 1
+        cls = c.classification or {}
+        if cls.get("abstained") or "error" in cls:
+            continue
+        dt = cls.get("document_type")
+        if dt:
+            type_counts[dt] = type_counts.get(dt, 0) + 1
+        for e in cls.get("entities") or []:
+            key = (e.get("type", "?"), e.get("value", ""))
+            if key[1] and key not in entities:
+                entities[key] = e
+        for t in cls.get("suggested_tags") or []:
+            if t:
+                tags.add(t)
+        if cls.get("summary"):
+            summaries.append(cls["summary"])
+
+    dominant = max(type_counts.items(), key=lambda kv: kv[1])[0] if type_counts else None
+
+    return {
+        "document_id": str(document_id),
+        "chunks_count": len(chunks),
+        "status_counts": status_counts,
+        "document_type": dominant,
+        "document_type_distribution": type_counts,
+        "entities": list(entities.values()),
+        "tags": sorted(tags),
+        "summaries": summaries,
+    }
 
 
 @router.post("/{document_id}/reingest", status_code=status.HTTP_202_ACCEPTED)

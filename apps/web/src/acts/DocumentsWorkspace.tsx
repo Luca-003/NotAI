@@ -19,6 +19,24 @@ type Doc = {
   ingested_at: string | null;
 };
 
+type ExtractedEntity = {
+  type: string;
+  value: string;
+  confidence: number;
+};
+
+type ChunkClassification = {
+  abstained?: boolean;
+  abstain_reason?: string | null;
+  document_type?: string;
+  entities?: ExtractedEntity[];
+  summary?: string | null;
+  suggested_tags?: string[];
+  source_refs?: { citation: string; score: number | null }[];
+  confidence?: number;
+  error?: string;
+};
+
 type Chunk = {
   id: string;
   document_id: string;
@@ -29,6 +47,20 @@ type Chunk = {
   page_number: number | null;
   embedding_indexed: boolean;
   token_count: number | null;
+  classification: ChunkClassification | null;
+  classification_status: "pending" | "in_progress" | "done" | "abstained" | "failed" | "skipped";
+  classified_at: string | null;
+};
+
+type DocumentClassificationSummary = {
+  document_id: string;
+  chunks_count: number;
+  status_counts: Record<string, number>;
+  document_type: string | null;
+  document_type_distribution: Record<string, number>;
+  entities: ExtractedEntity[];
+  tags: string[];
+  summaries: string[];
 };
 
 export function DocumentsWorkspace({
@@ -145,6 +177,7 @@ export function DocumentsWorkspace({
         onSelect={setSelectedId}
         onDelete={(id) => remove.mutate(id)}
         emptyMsg="Nessun documento ancora caricato. Trascina o scegli un file qui sopra."
+        session={session}
       />
 
       <DocumentList
@@ -153,6 +186,7 @@ export function DocumentsWorkspace({
         selectedId={selectedId}
         onSelect={setSelectedId}
         emptyMsg="L'atto bozza apparir&agrave; qui dopo aver avviato il workflow."
+        session={session}
       />
 
       {selectedId && (
@@ -173,6 +207,7 @@ function DocumentList({
   onSelect,
   onDelete,
   emptyMsg,
+  session,
 }: {
   title: string;
   docs: Doc[];
@@ -180,6 +215,7 @@ function DocumentList({
   onSelect: (id: string) => void;
   onDelete?: (id: string) => void;
   emptyMsg: string;
+  session: Session;
 }) {
   return (
     <div style={{ marginTop: "1.25rem" }}>
@@ -198,17 +234,24 @@ function DocumentList({
                 ...(selectedId === d.id ? styles.docRowActive : {}),
               }}
             >
-              <button onClick={() => onSelect(d.id)} style={styles.docMain}>
-                <span style={styles.mimeIcon}>{mimeIcon(d.mime_type)}</span>
-                <span style={styles.docInfo}>
-                  <strong style={{ fontSize: "0.92rem" }}>{d.filename}</strong>
-                  <span style={styles.docMeta}>
-                    {d.mime_type} · {humanSize(d.size_bytes)} ·{" "}
-                    <code style={{ fontSize: "0.7rem" }}>{d.sha256.slice(0, 10)}…</code>
+              <div style={{ flex: 1 }}>
+                <button onClick={() => onSelect(d.id)} style={styles.docMain}>
+                  <span style={styles.mimeIcon}>{mimeIcon(d.mime_type)}</span>
+                  <span style={styles.docInfo}>
+                    <strong style={{ fontSize: "0.92rem" }}>{d.filename}</strong>
+                    <span style={styles.docMeta}>
+                      {d.mime_type} · {humanSize(d.size_bytes)} ·{" "}
+                      <code style={{ fontSize: "0.7rem" }}>{d.sha256.slice(0, 10)}…</code>
+                    </span>
                   </span>
-                </span>
-                <IngestionBadge doc={d} />
-              </button>
+                  <IngestionBadge doc={d} />
+                </button>
+                <DocumentClassificationStrip
+                  documentId={d.id}
+                  session={session}
+                  ingestionStatus={d.ingestion_status}
+                />
+              </div>
               {onDelete && (
                 <button
                   onClick={() => onDelete(d.id)}
@@ -225,6 +268,58 @@ function DocumentList({
     </div>
   );
 }
+
+function DocumentClassificationStrip({
+  documentId,
+  session,
+  ingestionStatus,
+}: {
+  documentId: string;
+  session: Session;
+  ingestionStatus: Doc["ingestion_status"];
+}) {
+  const summary = useQuery({
+    queryKey: ["doc-classification", documentId],
+    queryFn: () =>
+      apiFetch<DocumentClassificationSummary>(
+        `/v1/documents/${documentId}/classification`,
+        {},
+        session.token,
+      ),
+    enabled: ingestionStatus === "done",
+    refetchInterval: (q) => {
+      const data = q.state.data as DocumentClassificationSummary | undefined;
+      if (!data) return 3_000;
+      const pending =
+        (data.status_counts.pending ?? 0) + (data.status_counts.in_progress ?? 0);
+      return pending > 0 ? 2_500 : false;
+    },
+  });
+
+  if (!summary.data) return null;
+  const d = summary.data;
+  const dtype = d.document_type;
+  if (!dtype && d.entities.length === 0 && d.tags.length === 0) return null;
+
+  return (
+    <div style={styles.classStrip}>
+      {dtype && (
+        <span style={{ ...styles.classBadge, background: "#dbeafe", color: "#1e3a8a" }}>
+          {dtype.replace(/_/g, " ")}
+        </span>
+      )}
+      {d.entities.slice(0, 3).map((e, i) => (
+        <span key={i} style={styles.classBadge} title={e.type}>
+          {e.value.length > 28 ? e.value.slice(0, 26) + "…" : e.value}
+        </span>
+      ))}
+      {d.entities.length > 3 && (
+        <span style={styles.classMore}>+{d.entities.length - 3} entita'</span>
+      )}
+    </div>
+  );
+}
+
 
 function IngestionBadge({ doc }: { doc: Doc }) {
   const conf: Record<Doc["ingestion_status"], { label: string; bg: string; fg: string }> = {
@@ -353,6 +448,7 @@ function ChunksList({ documentId, session }: { documentId: string; session: Sess
               {" · "}offset {c.char_start}-{c.char_end}
               {c.embedding_indexed ? " · ✓ indicizzato" : " · vector ko"}
               {c.token_count != null && ` · ~${c.token_count} token`}
+              {" · class: "}<span style={{ color: classStatusColor(c.classification_status) }}>{c.classification_status}</span>
             </div>
             <div
               style={{
@@ -367,10 +463,96 @@ function ChunksList({ documentId, session }: { documentId: string; session: Sess
             >
               {c.text}
             </div>
+            <ChunkClassificationDetails classification={c.classification} status={c.classification_status} />
           </li>
         ))}
       </ol>
     </details>
+  );
+}
+
+
+function classStatusColor(s: Chunk["classification_status"]): string {
+  if (s === "done") return "#166534";
+  if (s === "abstained") return "#854d0e";
+  if (s === "failed") return "#7f1d1d";
+  return "#64748b";
+}
+
+function ChunkClassificationDetails({
+  classification,
+  status,
+}: {
+  classification: ChunkClassification | null;
+  status: Chunk["classification_status"];
+}) {
+  if (!classification) {
+    if (status === "in_progress" || status === "pending") {
+      return <div style={{ marginTop: "0.4rem", fontSize: "0.78rem", color: "#64748b" }}>Sto analizzando...</div>;
+    }
+    return null;
+  }
+  if (classification.error) {
+    return (
+      <div style={{ marginTop: "0.4rem", fontSize: "0.78rem", color: "#7f1d1d" }}>
+        Errore: {classification.error}
+      </div>
+    );
+  }
+  if (classification.abstained) {
+    return (
+      <div style={{ marginTop: "0.4rem", fontSize: "0.78rem", color: "#854d0e", fontStyle: "italic" }}>
+        Il sistema si e' astenuto dalla classificazione: {classification.abstain_reason ?? "motivo non specificato"}
+      </div>
+    );
+  }
+  return (
+    <div style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
+      {classification.document_type && (
+        <div>
+          <strong>Tipo:</strong>{" "}
+          <span style={styles.classBadge}>{classification.document_type.replace(/_/g, " ")}</span>
+        </div>
+      )}
+      {classification.summary && (
+        <div style={{ marginTop: "0.3rem", color: "#334155" }}>
+          <strong>Riassunto:</strong> {classification.summary}
+        </div>
+      )}
+      {classification.entities && classification.entities.length > 0 && (
+        <div style={{ marginTop: "0.3rem" }}>
+          <strong>Entita' estratte:</strong>
+          <ul style={{ paddingLeft: "1.2rem", margin: "0.2rem 0" }}>
+            {classification.entities.map((e, i) => (
+              <li key={i} style={{ fontSize: "0.82rem" }}>
+                <code style={{ background: "#f1f5f9", padding: "0 0.3rem", borderRadius: 2 }}>{e.type}</code>{" "}
+                {e.value}
+                {e.confidence > 0 && (
+                  <span style={{ color: "#94a3b8", fontSize: "0.72rem", marginLeft: "0.4rem" }}>
+                    (conf {(e.confidence * 100).toFixed(0)}%)
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {classification.suggested_tags && classification.suggested_tags.length > 0 && (
+        <div style={{ marginTop: "0.3rem", display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+          {classification.suggested_tags.map((t, i) => (
+            <span key={i} style={{ ...styles.classBadge, background: "#fef3c7", color: "#78350f" }}>
+              #{t}
+            </span>
+          ))}
+        </div>
+      )}
+      {classification.source_refs && classification.source_refs.length > 0 && (
+        <div style={{ marginTop: "0.3rem", fontSize: "0.78rem", color: "#475569" }}>
+          <strong>Riferimenti normativi citati:</strong>{" "}
+          {classification.source_refs.map((r) => r.citation).join(", ")}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -514,5 +696,25 @@ const styles = {
     maxHeight: 500,
     overflow: "auto",
     whiteSpace: "pre-wrap",
+  } as React.CSSProperties,
+  classStrip: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "0.3rem",
+    padding: "0 0.75rem 0.55rem 2.4rem",
+  } as React.CSSProperties,
+  classBadge: {
+    background: "#f1f5f9",
+    color: "#334155",
+    padding: "0.1rem 0.5rem",
+    borderRadius: 3,
+    fontSize: "0.72rem",
+    fontWeight: 500,
+  } as React.CSSProperties,
+  classMore: {
+    color: "#64748b",
+    fontSize: "0.72rem",
+    fontStyle: "italic",
+    padding: "0.1rem 0",
   } as React.CSSProperties,
 };

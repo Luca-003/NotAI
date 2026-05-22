@@ -61,4 +61,69 @@ class DraftSuggestion(StructuredAIOutput):
     risk_notes: list[str] = Field(default_factory=list)
 
 
-__all__ = ["ClauseClassification", "DraftSuggestion", "SourceRef", "StructuredAIOutput"]
+# ---------------------------------------------------------------------------
+# Classificazione chunk di documento INPUT (visure, ID, atto preliminare, ...)
+# ---------------------------------------------------------------------------
+
+
+class ExtractedEntity(BaseModel):
+    """Entita' estratta da un chunk di documento."""
+
+    type: Literal[
+        "person_name",
+        "company_name",
+        "fiscal_code",
+        "vat_number",
+        "address",
+        "immobile_cadastral",
+        "amount",
+        "date",
+        "iban",
+        "other",
+    ]
+    value: str = Field(..., max_length=512)
+    confidence: float = Field(0.0, ge=0, le=1)
+
+
+class ChunkClassification(StructuredAIOutput):
+    """Classificazione completa di un chunk di documento input.
+
+    Vincoli (zero-allucinazione):
+    - `document_type` deve essere un valore canonico (Literal).
+    - `entities` puo' contenere solo entita' LETTERALMENTE presenti nel chunk;
+      l'abstention detector filtra ad-hoc i numeri non grounded.
+    - `normative_refs` deve avere citation grounded (validato dall'abstention).
+    """
+
+    document_type: Literal[
+        "visura_catastale",
+        "visura_camerale",
+        "visura_ipotecaria",
+        "atto_preliminare",
+        "documento_identita",
+        "codice_fiscale",
+        "perizia",
+        "certificato_anagrafico",
+        "altro",
+        "indeterminato",
+    ] = "indeterminato"
+    entities: list[ExtractedEntity] = Field(default_factory=list)
+    summary: str | None = Field(
+        None,
+        max_length=300,
+        description="Riassunto di 1-2 frasi del contenuto del chunk",
+    )
+    suggested_tags: list[str] = Field(
+        default_factory=list,
+        description="Tag liberi (es. 'immobile', 'venditore', 'milano')",
+    )
+
+
+__all__ = [
+    "ChunkClassification",
+    "ClauseClassification",
+    "DraftSuggestion",
+    "ExtractedEntity",
+    "SourceRef",
+    "StructuredAIOutput",
+]

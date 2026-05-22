@@ -98,5 +98,14 @@ class DocumentChunk(IdMixin, TenantMixin, TimestampsMixin, Base):
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     extra: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
 
+    # Classificazione LLM (Fase 3 - blocco 3 visione workspace)
+    classification: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    classification_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="pending"
+    )
+    classified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
 
 __all__ = ["Document", "DocumentChunk"]
