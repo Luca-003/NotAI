@@ -445,27 +445,65 @@ function VisureSection({ visure }: { visure: Visura[] }) {
   );
 }
 
+type DraftSection = {
+  id: string;
+  title: string;
+  text: string;
+  sources?: { chunk_id: string; source_document_id: string; entity_type?: string; document_type?: string }[];
+};
+
+type ProvLink = {
+  id: string;
+  source_chunk_id: string;
+  source_document_id: string;
+  relation: string;
+  rationale: string | null;
+  confidence: number;
+};
+
 function DraftViewer({
   draft,
 }: {
   draft: { document_id: string; sha256: string; storage_uri: string };
 }) {
-  const content = useQuery({
+  const token = localStorage.getItem("notai.jwt");
+
+  const sections = useQuery({
+    queryKey: ["doc-sections", draft.document_id],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE}/v1/documents/${draft.document_id}/sections`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return (await r.json()) as { sections: DraftSection[]; filename: string };
+    },
+  });
+
+  const provenance = useQuery({
+    queryKey: ["doc-provenance", draft.document_id],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE}/v1/documents/${draft.document_id}/provenance`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return (await r.json()) as { links_by_section: Record<string, ProvLink[]>; total_links: number };
+    },
+  });
+
+  const rawContent = useQuery({
     queryKey: ["doc-content", draft.document_id],
     queryFn: async () => {
-      const token = localStorage.getItem("notai.jwt");
-      const r = await fetch(
-        `${API_BASE}/v1/documents/${draft.document_id}/content`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
+      const r = await fetch(`${API_BASE}/v1/documents/${draft.document_id}/content`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.text();
     },
   });
 
   const download = () => {
-    if (!content.data) return;
-    const blob = new Blob([content.data], { type: "text/markdown;charset=utf-8" });
+    if (!rawContent.data) return;
+    const blob = new Blob([rawContent.data], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -474,46 +512,105 @@ function DraftViewer({
     URL.revokeObjectURL(url);
   };
 
+  const secs = sections.data?.sections ?? [];
+
   return (
     <section style={card}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
         <h3 style={{ margin: 0 }}>Documento atto (bozza)</h3>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <button onClick={download} disabled={!content.data} style={s.primaryBtn}>
-            ⬇ Scarica .md
-          </button>
-        </div>
+        <button onClick={download} disabled={!rawContent.data} style={s.primaryBtn}>
+          ⬇ Scarica .md
+        </button>
       </div>
-      <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: "0.5rem" }}>
-        <code>{draft.document_id}</code> · sha256{" "}
-        <code>{draft.sha256.slice(0, 16)}…</code>
+      <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: "0.75rem" }}>
+        <code>{draft.document_id}</code> · sha256 <code>{draft.sha256.slice(0, 16)}…</code>
+        {provenance.data && (
+          <span style={{ marginLeft: "0.75rem" }}>
+            · <strong>{provenance.data.total_links}</strong> link di provenienza ai chunk di input
+          </span>
+        )}
       </div>
 
-      {content.isLoading && <p>Carico documento...</p>}
-      {content.isError && (
+      {sections.isLoading && <p>Carico sezioni...</p>}
+      {sections.isError && (
         <div style={{ background: "#fee2e2", color: "#7f1d1d", padding: "0.5rem 0.75rem", borderRadius: 4 }}>
-          Errore caricamento documento: {String(content.error)}. Il documento e' stato
-          comunque registrato nel DB con hash <code>{draft.sha256.slice(0, 12)}…</code>.
+          Errore: {String(sections.error)}
         </div>
       )}
 
-      {content.data && (
-        <article
-          style={{
-            background: "#fafaf9",
-            border: "1px solid #e7e5e4",
-            borderRadius: 4,
-            padding: "1.25rem 1.5rem",
-            maxHeight: 560,
-            overflowY: "auto",
-            fontFamily: "Georgia, 'Times New Roman', serif",
-            lineHeight: 1.7,
-            whiteSpace: "pre-wrap",
-            fontSize: "0.95rem",
-            color: "#1c1917",
-          }}
-        >
-          {content.data}
+      {secs.length > 0 && (
+        <div style={{
+          background: "#fafaf9",
+          border: "1px solid #e7e5e4",
+          borderRadius: 4,
+          padding: "1rem 1.25rem",
+          maxHeight: 640,
+          overflowY: "auto",
+        }}>
+          {secs.map((sec) => {
+            const links = provenance.data?.links_by_section[sec.id] ?? [];
+            return (
+              <article
+                key={sec.id}
+                style={{
+                  marginBottom: "1.2rem",
+                  borderLeft: links.length > 0 ? "3px solid #16a34a" : "3px solid transparent",
+                  paddingLeft: "0.8rem",
+                }}
+              >
+                <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.5rem" }}>
+                  <h4 style={{ margin: 0, fontFamily: "Georgia, serif", color: "#0f172a" }}>{sec.title}</h4>
+                  {links.length > 0 ? (
+                    <details style={{ fontSize: "0.78rem" }}>
+                      <summary style={{ cursor: "pointer", color: "#16a34a", fontWeight: 600 }}>
+                        ⓘ {links.length} font{links.length === 1 ? "e" : "i"}
+                      </summary>
+                      <ul style={{ paddingLeft: "1rem", margin: "0.4rem 0", color: "#475569" }}>
+                        {links.map((l) => (
+                          <li key={l.id} style={{ marginBottom: "0.3rem" }}>
+                            <code style={{ fontSize: "0.7rem", background: "#f1f5f9", padding: "0 0.3rem", borderRadius: 2 }}>
+                              {l.relation}
+                            </code>{" "}
+                            {l.rationale ?? ""}{" "}
+                            <span style={{ color: "#94a3b8" }}>
+                              (conf {(l.confidence * 100).toFixed(0)}%)
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : (
+                    <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>(nessuna fonte collegata)</span>
+                  )}
+                </header>
+                <div style={{
+                  fontFamily: "Georgia, 'Times New Roman', serif",
+                  lineHeight: 1.65,
+                  whiteSpace: "pre-wrap",
+                  fontSize: "0.93rem",
+                  color: "#1c1917",
+                  marginTop: "0.4rem",
+                }}>
+                  {sec.text}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {secs.length === 0 && rawContent.data && (
+        <article style={{
+          background: "#fafaf9",
+          border: "1px solid #e7e5e4",
+          borderRadius: 4,
+          padding: "1.25rem 1.5rem",
+          maxHeight: 560,
+          overflowY: "auto",
+          fontFamily: "Georgia, serif",
+          whiteSpace: "pre-wrap",
+        }}>
+          {rawContent.data}
         </article>
       )}
     </section>

@@ -13,7 +13,11 @@ from notai.contexts.audit.models import (  # noqa: F401
     AuditEvent,
     LLMInvocation,
 )
-from notai.contexts.documents.models import Document, DocumentChunk  # noqa: F401
+from notai.contexts.documents.models import (  # noqa: F401
+    Document,
+    DocumentChunk,
+    ProvenanceLink,
+)
 from notai.contexts.iam.models import (  # noqa: F401
     Permission,
     Role,

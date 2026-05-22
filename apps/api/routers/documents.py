@@ -13,7 +13,7 @@ from sqlalchemy import select
 from apps.api.deps import DbDep, TenantDep
 from notai.contexts.audit.logger import audit_logger
 from notai.contexts.documents.ingestion import ingest_document
-from notai.contexts.documents.models import Document, DocumentChunk
+from notai.contexts.documents.models import Document, DocumentChunk, ProvenanceLink
 from notai.contexts.documents.storage import get_blob, parse_storage_uri, put_blob
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -249,6 +249,80 @@ async def list_document_chunks(
         .order_by(DocumentChunk.ordering.asc())
     )
     return [ChunkRead.model_validate(c) for c in rows.scalars().all()]
+
+
+@router.get("/{document_id}/sections")
+async def get_document_sections(
+    document_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> dict:
+    """Sezioni strutturate del documento di output (es. bozza atto)."""
+    del principal
+    doc = await _load_doc(session, document_id)
+    return {
+        "document_id": str(document_id),
+        "filename": doc.filename,
+        "kind": doc.kind,
+        "sections": doc.sections or [],
+    }
+
+
+@router.get("/{document_id}/provenance")
+async def get_document_provenance(
+    document_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> dict:
+    """Mappa output_section_id -> lista di source chunks.
+
+    Usato dall'UI per mostrare, accanto a ogni sezione dell'atto, da quali
+    chunk dei documenti di input il sistema ha preso le informazioni.
+    """
+    del principal
+    await _load_doc(session, document_id)
+    rows = await session.execute(
+        select(ProvenanceLink).where(
+            ProvenanceLink.output_document_id == document_id
+        )
+    )
+    by_section: dict[str, list[dict]] = {}
+    for link in rows.scalars().all():
+        by_section.setdefault(link.output_section_id, []).append({
+            "id": str(link.id),
+            "source_chunk_id": str(link.source_chunk_id),
+            "source_document_id": str(link.source_document_id),
+            "relation": link.relation,
+            "rationale": link.rationale,
+            "confidence": link.confidence,
+        })
+    return {
+        "document_id": str(document_id),
+        "links_by_section": by_section,
+        "total_links": sum(len(v) for v in by_section.values()),
+    }
+
+
+@router.get("/chunks/{chunk_id}/reverse-provenance")
+async def get_chunk_reverse_provenance(
+    chunk_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> dict:
+    """Reverse: dato un chunk di input, in quali documenti/sezioni di output e' stato usato.
+
+    Permette al notaio di partire da un dato (es. "questa visura catastale")
+    e vedere TUTTI gli atti che lo hanno usato.
+    """
+    del principal
+    rows = await session.execute(
+        select(ProvenanceLink).where(ProvenanceLink.source_chunk_id == chunk_id)
+    )
+    items: list[dict] = []
+    for link in rows.scalars().all():
+        items.append({
+            "id": str(link.id),
+            "output_document_id": str(link.output_document_id),
+            "output_section_id": link.output_section_id,
+            "relation": link.relation,
+            "rationale": link.rationale,
+            "confidence": link.confidence,
+        })
+    return {"chunk_id": str(chunk_id), "uses": items, "count": len(items)}
 
 
 @router.get("/{document_id}/classification")

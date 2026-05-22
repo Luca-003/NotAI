@@ -61,6 +61,10 @@ class Document(IdMixin, TenantMixin, TimestampsMixin, SoftDeleteMixin, Base):
     retention_class: Mapped[str] = mapped_column(String(32), nullable=False, server_default="nessuna")
     extra: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
 
+    # Output structure (per documenti generati dal sistema): lista di sezioni
+    # con id, titolo, testo, riferimenti ai chunk sorgente (provenance).
+    sections: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
     # Ingestion pipeline (parsing + chunking + embeddings)
     # Stato: pending | in_progress | done | failed | skipped
     ingestion_status: Mapped[str] = mapped_column(
@@ -108,4 +112,43 @@ class DocumentChunk(IdMixin, TenantMixin, TimestampsMixin, Base):
     )
 
 
-__all__ = ["Document", "DocumentChunk"]
+class ProvenanceLink(IdMixin, TenantMixin, TimestampsMixin, Base):
+    """Link di provenienza: una sezione dell'output deriva da un chunk sorgente.
+
+    Permette navigazione bidirezionale:
+      - output -> input: dato un documento di output e una sezione, trova i chunk
+      - input -> output: dato un chunk, trova tutte le sezioni che lo usano
+    """
+
+    __tablename__ = "provenance_links"
+
+    output_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    output_section_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_chunk_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_chunks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # derived_from | cites | uses_entity | uses_norm
+    relation: Mapped[str] = mapped_column(String(32), nullable=False, server_default="derived_from")
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float] = mapped_column(nullable=False, server_default="1.0")
+    llm_invocation_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    extra: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+
+
+__all__ = ["Document", "DocumentChunk", "ProvenanceLink"]

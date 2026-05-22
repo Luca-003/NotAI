@@ -138,11 +138,17 @@ async def visura_anpr(req: VisuraRequest) -> VisuraResult:
     return result
 
 
-def _render_act_markdown(template_id: str, slots: dict) -> str:
-    """Renderer markdown di una bozza notarile.
+def _build_act_sections(template_id: str, slots: dict) -> list[dict]:
+    """Genera la struttura dell'atto in sezioni indipendenti.
 
-    NON e' ancora un vero motore Jinja (arriva in Fase 4). Produce un atto
-    "credibile" che il notaio puo' leggere e su cui chiedere modifiche.
+    Ogni sezione ha:
+      - id: identificatore stabile (parties, visure, premesse, art_1, ...)
+      - title: titolo umano-leggibile
+      - text: contenuto markdown
+      - relies_on: descrittore semantico delle informazioni di cui ha bisogno
+        (es. "person_name", "address", "amount", "immobile_cadastral")
+        usato dalla provenance euristica per linkare ai chunk sorgente.
+
     Tutti i numeri (importi, date) provengono dagli slots - mai inventati.
     """
     parties = slots.get("parties") or []
@@ -163,87 +169,131 @@ def _render_act_markdown(template_id: str, slots: dict) -> str:
         for v in visure_summaries
     ) or "_(nessuna visura)_"
 
-    return f"""# Bozza atto — {template_id}
+    base_str = (
+        f'{base:,.2f}'.replace(',', '.') if isinstance(base, (int, float)) else '—'
+    )
 
-> **Stato:** bozza in attesa di review del notaio.
-> **Data redazione:** {today}
-> **Template:** `{template_id}`
+    return [
+        {
+            "id": "header",
+            "title": "Intestazione",
+            "text": (
+                f"**Bozza atto** — `{template_id}`  \n"
+                f"Stato: bozza in attesa di review del notaio.  \n"
+                f"Data redazione: {today}"
+            ),
+            "relies_on": [],
+        },
+        {
+            "id": "parties",
+            "title": "Parti",
+            "text": parties_md,
+            "relies_on": ["person_name", "fiscal_code", "company_name", "vat_number"],
+        },
+        {
+            "id": "visure",
+            "title": "Visure pre-atto",
+            "text": visure_md,
+            "relies_on": ["address", "immobile_cadastral"],
+        },
+        {
+            "id": "premesse",
+            "title": "Premesso che",
+            "text": (
+                "a) Le parti dichiarano di essere a conoscenza dei reciproci dati "
+                "anagrafici come risultanti dalle visure acquisite a cura del notaio "
+                "rogante;\n\n"
+                "b) il presente atto e' redatto in conformita' al modello standard "
+                f"`{template_id}` e dovra' essere riletto e firmato dinanzi al notaio;\n\n"
+                f"c) il corrispettivo / valore di riferimento e' pari a EUR **{base_str}**."
+            ),
+            "relies_on": ["amount", "person_name"],
+        },
+        {
+            "id": "art_1",
+            "title": "Articolo 1 — Oggetto",
+            "text": "[Da completare in fase di review: descrizione dell'oggetto dell'atto.]",
+            "relies_on": ["immobile_cadastral", "address"],
+        },
+        {
+            "id": "art_2",
+            "title": "Articolo 2 — Prezzo / valore",
+            "text": (
+                "Le parti dichiarano che il valore di riferimento e' quello indicato in premessa."
+            ),
+            "relies_on": ["amount"],
+        },
+        {
+            "id": "art_3",
+            "title": "Articolo 3 — Garanzie e dichiarazioni",
+            "text": (
+                "I dichiaranti, ai sensi e per gli effetti di cui all'art. 1490 c.c. "
+                "e seguenti, garantiscono la conformita' del bene oggetto del presente atto. "
+                "La parte trasferente dichiara che il bene e' libero da pesi pregiudizievoli, "
+                "salvo quanto eventualmente risultante dalle visure ipo-catastali allegate."
+            ),
+            "relies_on": ["immobile_cadastral"],
+        },
+        {
+            "id": "art_4",
+            "title": "Articolo 4 — Trascrizione",
+            "text": (
+                "Il presente atto sara' trascritto nei pubblici registri ai sensi dell'art. "
+                "2643 c.c. a cura del notaio rogante."
+            ),
+            "relies_on": [],
+        },
+        {
+            "id": "art_5",
+            "title": "Articolo 5 — Imposte",
+            "text": (
+                "Per gli aspetti fiscali si rinvia al prospetto di calcolo delle imposte "
+                "allegato (registro / ipotecaria / catastale), determinate ai sensi del "
+                "DPR 131/1986 e del D.Lgs 347/1990."
+            ),
+            "relies_on": ["amount"],
+        },
+        {
+            "id": "note_tecniche",
+            "title": "Note tecniche per il notaio",
+            "text": (
+                "Questo testo e' una bozza preliminare prodotta da NotAI sulla base del "
+                f"template `{template_id}` e dei dati raccolti tramite visure automatiche "
+                "e dei documenti caricati dal notaio.\n\nLe parti sostanziali (oggetto, "
+                "prezzo definitivo, clausole specifiche) DEVONO essere completate e "
+                "validate dal notaio prima della firma."
+            ),
+            "relies_on": [],
+        },
+    ]
 
----
 
-## Parti
-{parties_md}
-
-## Visure pre-atto acquisite automaticamente
-{visure_md}
-
-## Premesso che
-
-a) Le parti dichiarano di essere a conoscenza dei reciproci dati anagrafici come
-   risultanti dalle visure di cui sopra, acquisite a cura del notaio rogante
-   nelle competenti banche dati (ANPR, Registro Imprese, ove applicabile);
-
-b) il presente atto e' redatto in conformita' al modello standard
-   `{template_id}` e dovra' essere riletto, integrato e firmato in presenza
-   del notaio rogante;
-
-c) il corrispettivo / valore di riferimento e' pari a EUR
-   **{f'{base:,.2f}'.replace(',', '.') if isinstance(base, (int, float)) else '—'}**
-   come dichiarato dalle parti.
-
-## Articolo 1 — Oggetto
-
-[Da completare in fase di review: descrizione dell'oggetto dell'atto.]
-
-## Articolo 2 — Prezzo / valore
-
-Le parti dichiarano che il valore di riferimento e' quello indicato in
-premessa.
-
-## Articolo 3 — Garanzie e dichiarazioni
-
-I dichiaranti, ai sensi e per gli effetti di cui all'art. 1490 c.c. e
-seguenti, garantiscono la conformita' del bene oggetto del presente atto.
-La parte trasferente dichiara che il bene e' libero da pesi pregiudizievoli,
-salvo quanto eventualmente risultante dalle visure ipo-catastali allegate.
-
-## Articolo 4 — Trascrizione
-
-Il presente atto sara' trascritto nei pubblici registri ai sensi dell'art.
-2643 c.c. a cura del notaio rogante.
-
-## Articolo 5 — Imposte
-
-Per gli aspetti fiscali si rinvia al prospetto di calcolo delle imposte
-allegato (registro / ipotecaria / catastale), determinate ai sensi del
-DPR 131/1986 e del D.Lgs 347/1990.
-
----
-
-**Note tecniche per il notaio**
-
-Questo testo e' una **bozza preliminare** prodotta da NotAI sulla base del
-template `{template_id}` e dei dati raccolti tramite visure automatiche.
-Le parti sostanziali (oggetto, prezzo definitivo, clausole specifiche) DEVONO
-essere completate e validate dal notaio prima della firma.
-
-Provenienza clausole: `template` (nessuna porzione generata da AI in questa
-versione). Eventuali suggerimenti AI futuri verranno marcati con
-`generated_by: llm` e accompagnati dal riferimento normativo cited.
-"""
+def _sections_to_markdown(sections: list[dict]) -> str:
+    """Render markdown delle sezioni per il viewer."""
+    blocks = []
+    for s in sections:
+        blocks.append(f"## {s['title']}\n\n{s['text']}")
+    return "\n\n---\n\n".join(blocks)
 
 
 @activity.defn(name="draft.generate")
 async def draft_generate(req: DraftRequest) -> DraftResult:
-    """Genera bozza atto da template e la salva su MinIO + Document su DB."""
+    """Genera bozza atto da template + provenance euristica dai chunk input."""
     from minio.error import S3Error
+    from sqlalchemy import select as sa_select
 
-    from notai.contexts.documents.models import Document
+    from notai.contexts.documents.models import (
+        Document,
+        DocumentChunk,
+        ProvenanceLink,
+    )
     from notai.contexts.documents.storage import put_text
 
     activity.heartbeat("rendering draft")
-    text_content = _render_act_markdown(req.template_id, req.slots)
+    sections = _build_act_sections(req.template_id, req.slots)
+    text_content = _sections_to_markdown(sections)
     tenant_uuid = uuid.UUID(req.ctx.tenant_id)
+    act_uuid = uuid.UUID(req.ctx.act_id)
     doc_id = uuid.uuid4()
     key = f"draft/{req.ctx.tenant_id}/{req.ctx.act_id}/{doc_id}.md"
     bucket = "notai-documents"
@@ -252,19 +302,112 @@ async def draft_generate(req: DraftRequest) -> DraftResult:
         storage_uri, sha = await put_text(bucket, key, text_content)
         upload_ok = True
     except S3Error as e:
-        # Se MinIO non risponde, manteniamo lo stub: il workflow puo' andare avanti
-        # ma marchiamo l'evento per troubleshooting.
         logger.warning("notai.draft.storage_failed", error=str(e))
         storage_uri = f"s3://{bucket}/{key}"
         sha = hashlib.sha256(text_content.encode("utf-8")).hexdigest()
         upload_ok = False
 
-    # Persisti Document nel DB (sessione tenant-scoped per RLS)
+    provenance_count = 0
     async with scoped_session(tenant_uuid) as session:
+        # 1) Carica i chunks classificati dei documenti di input dell'atto
+        chunk_rows = (
+            await session.execute(
+                sa_select(DocumentChunk, Document.id.label("doc_id"))
+                .join(Document, DocumentChunk.document_id == Document.id)
+                .where(
+                    Document.act_id == act_uuid,
+                    Document.kind == "input_source",
+                    Document.deleted_at.is_(None),
+                )
+            )
+        ).all()
+
+        # Indice: per ogni "relies_on" type, lista di (chunk, source_doc_id)
+        chunks_by_entity_type: dict[str, list] = {}
+        chunks_by_doc_type: dict[str, list] = {}
+        for row in chunk_rows:
+            chunk = row[0]
+            doc_id_src = row[1]
+            cls = chunk.classification or {}
+            if cls.get("abstained") or "error" in cls:
+                continue
+            doc_type = cls.get("document_type")
+            if doc_type:
+                chunks_by_doc_type.setdefault(doc_type, []).append((chunk, doc_id_src))
+            for ent in cls.get("entities") or []:
+                etype = ent.get("type")
+                if etype:
+                    chunks_by_entity_type.setdefault(etype, []).append((chunk, doc_id_src))
+
+        # 2) Per ogni sezione, deduce provenance dai relies_on
+        provenance_records: list[ProvenanceLink] = []
+        sections_with_sources: list[dict] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for section in sections:
+            section_sources: list[dict] = []
+            for relies in section.get("relies_on", []):
+                candidates = chunks_by_entity_type.get(relies, [])
+                for chunk, src_doc_id in candidates:
+                    pair = (section["id"], str(chunk.id))
+                    if pair in seen_pairs:
+                        continue
+                    seen_pairs.add(pair)
+                    section_sources.append({
+                        "chunk_id": str(chunk.id),
+                        "source_document_id": str(src_doc_id),
+                        "entity_type": relies,
+                    })
+                    provenance_records.append(
+                        ProvenanceLink(
+                            tenant_id=tenant_uuid,
+                            output_document_id=doc_id,
+                            output_section_id=section["id"],
+                            source_chunk_id=chunk.id,
+                            source_document_id=src_doc_id,
+                            relation="uses_entity",
+                            rationale=(
+                                f"sezione '{section['title']}' usa entita' di tipo "
+                                f"'{relies}' estratte dal chunk #{chunk.ordering}"
+                            ),
+                            confidence=0.85,
+                        )
+                    )
+            # Anche provenance per document_type esplicito (visure -> sezione visure/art_1)
+            if section["id"] in ("visure", "art_1") and "visura_catastale" in chunks_by_doc_type:
+                for chunk, src_doc_id in chunks_by_doc_type["visura_catastale"]:
+                    pair = (section["id"], str(chunk.id))
+                    if pair in seen_pairs:
+                        continue
+                    seen_pairs.add(pair)
+                    section_sources.append({
+                        "chunk_id": str(chunk.id),
+                        "source_document_id": str(src_doc_id),
+                        "document_type": "visura_catastale",
+                    })
+                    provenance_records.append(
+                        ProvenanceLink(
+                            tenant_id=tenant_uuid,
+                            output_document_id=doc_id,
+                            output_section_id=section["id"],
+                            source_chunk_id=chunk.id,
+                            source_document_id=src_doc_id,
+                            relation="derived_from",
+                            rationale=(
+                                f"sezione '{section['title']}' deriva dalla visura "
+                                f"catastale (chunk #{chunk.ordering})"
+                            ),
+                            confidence=0.9,
+                        )
+                    )
+
+            section_with_meta = {**section, "sources": section_sources}
+            sections_with_sources.append(section_with_meta)
+
+        # 3) Persisti Document + sections + provenance
         doc = Document(
             id=doc_id,
             tenant_id=tenant_uuid,
-            act_id=uuid.UUID(req.ctx.act_id),
+            act_id=act_uuid,
             practice_id=uuid.UUID(req.ctx.practice_id),
             kind="bozza_atto",
             filename=f"bozza-{doc_id}.md",
@@ -274,8 +417,12 @@ async def draft_generate(req: DraftRequest) -> DraftResult:
             sha256=sha,
             retention_class="nessuna",
             extra={"template_id": req.template_id, "upload_ok": upload_ok},
+            sections=sections_with_sources,
         )
         session.add(doc)
+        if provenance_records:
+            session.add_all(provenance_records)
+            provenance_count = len(provenance_records)
         await session.flush()
 
     await _audit(
@@ -289,6 +436,8 @@ async def draft_generate(req: DraftRequest) -> DraftResult:
             "storage_uri": storage_uri,
             "upload_ok": upload_ok,
             "size_bytes": len(text_content.encode("utf-8")),
+            "sections_count": len(sections_with_sources),
+            "provenance_links_count": provenance_count,
         },
     )
     return DraftResult(document_id=str(doc_id), storage_uri=storage_uri, sha256=sha)
