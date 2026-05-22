@@ -29,6 +29,14 @@ services:
   llama-cpp:
     ports: ["8080:8080"]
 
+  notai-migrator:
+    # Bind-mount cosi' alembic upgrade head vede i nuovi migration .py senza
+    # dover rebuildare l'immagine ad ogni revision.
+    volumes:
+      - ./notai:/app/notai
+      - ./apps:/app/apps
+      - ./migrations:/app/migrations
+
   notai-api:
     command:
       - "uvicorn"
