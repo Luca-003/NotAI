@@ -168,6 +168,7 @@ export function ActDetail({
               statusTemporal={wfStatus.data.status_temporal}
               onReview={review.mutate}
               reviewPending={review.isPending}
+              token={session.token}
               onSelectSource={(documentId, chunkId) =>
                 setSelectedSource({ documentId, chunkId })
               }
@@ -346,12 +347,14 @@ function WorkflowView({
   statusTemporal,
   onReview,
   reviewPending,
+  token,
   onSelectSource,
 }: {
   state: WorkflowState;
   statusTemporal: string | null;
   onReview: (decision: "approved" | "rejected" | "changed") => void;
   reviewPending: boolean;
+  token: string;
   onSelectSource: (documentId: string, chunkId: string) => void;
 }) {
   return (
@@ -370,7 +373,7 @@ function WorkflowView({
 
       {state.visure.length > 0 && <VisureSection visure={state.visure} />}
 
-      {state.draft && <DraftViewer draft={state.draft} onSelectSource={onSelectSource} />}
+      {state.draft && <DraftViewer draft={state.draft} token={token} onSelectSource={onSelectSource} />}
 
       {state.tax && (
         <section style={card}>
@@ -535,35 +538,34 @@ type ProvLink = {
 
 function DraftViewer({
   draft,
+  token,
   onSelectSource,
 }: {
   draft: { document_id: string; sha256: string; storage_uri: string };
+  token: string;
   onSelectSource: (documentId: string, chunkId: string) => void;
 }) {
-  const token = localStorage.getItem("notai.jwt");
   const qc = useQueryClient();
   const [showLineage, setShowLineage] = useState(false);
 
   const sections = useQuery({
     queryKey: ["doc-sections", draft.document_id],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE}/v1/documents/${draft.document_id}/sections`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return (await r.json()) as { sections: DraftSection[]; filename: string };
-    },
+    queryFn: () =>
+      apiFetch<{ sections: DraftSection[]; filename: string }>(
+        `/v1/documents/${draft.document_id}/sections`,
+        {},
+        token,
+      ),
   });
 
   const provenance = useQuery({
     queryKey: ["doc-provenance", draft.document_id],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE}/v1/documents/${draft.document_id}/provenance`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return (await r.json()) as { links_by_section: Record<string, ProvLink[]>; total_links: number };
-    },
+    queryFn: () =>
+      apiFetch<{ links_by_section: Record<string, ProvLink[]>; total_links: number }>(
+        `/v1/documents/${draft.document_id}/provenance`,
+        {},
+        token,
+      ),
   });
 
   const confirmLink = useMutation({
@@ -571,18 +573,14 @@ function DraftViewer({
       apiFetch(
         `/v1/documents/provenance/${id}/confirm`,
         { method: "PUT", body: JSON.stringify({ confirmed }) },
-        token ?? undefined,
+        token,
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["doc-provenance", draft.document_id] }),
   });
 
   const removeLink = useMutation({
     mutationFn: (id: string) =>
-      apiFetch(
-        `/v1/documents/provenance/${id}`,
-        { method: "DELETE" },
-        token ?? undefined,
-      ),
+      apiFetch(`/v1/documents/provenance/${id}`, { method: "DELETE" }, token),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["doc-provenance", draft.document_id] }),
   });
 

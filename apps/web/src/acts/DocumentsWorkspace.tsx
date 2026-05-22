@@ -100,7 +100,7 @@ export function DocumentsWorkspace({
       const pending = data.some(
         (d) => d.ingestion_status === "pending" || d.ingestion_status === "in_progress",
       );
-      return pending ? 2_000 : false;
+      return pending ? 3_000 : false;
     },
   });
 
@@ -496,10 +496,10 @@ function DocumentClassificationStrip({
     enabled: ingestionStatus === "done",
     refetchInterval: (q) => {
       const data = q.state.data as DocumentClassificationSummary | undefined;
-      if (!data) return 3_000;
+      if (!data) return 4_000;
       const pending =
         (data.status_counts.pending ?? 0) + (data.status_counts.in_progress ?? 0);
-      return pending > 0 ? 2_500 : false;
+      return pending > 0 ? 4_000 : false;
     },
   });
 
@@ -639,8 +639,21 @@ function ChunksList({
       apiFetch<Chunk[]>(`/v1/documents/${documentId}/chunks`, {}, session.token),
     refetchInterval: (q) => {
       const data = q.state.data as Chunk[] | undefined;
-      return !data || data.length === 0 ? 2_000 : false;
+      return !data || data.length === 0 ? 3_000 : false;
     },
+  });
+
+  // Una sola query per tutto il documento al posto di N (una per chunk).
+  // Solo i chunk con count > 0 attivano il rendering del badge.
+  const reverseCounts = useQuery({
+    queryKey: ["reverse-provenance-counts", documentId],
+    queryFn: () =>
+      apiFetch<{ counts_by_chunk: Record<string, number> }>(
+        `/v1/documents/${documentId}/reverse-provenance-counts`,
+        {},
+        session.token,
+      ),
+    staleTime: 30_000,
   });
 
   // Auto-scroll al chunk evidenziato
@@ -682,7 +695,11 @@ function ChunksList({
               transition: "background 200ms",
             }}
           >
-            <ChunkLineageBadge chunkId={c.id} session={session} />
+            <ChunkLineageBadge
+              chunkId={c.id}
+              session={session}
+              hint={reverseCounts.data?.counts_by_chunk[c.id] ?? 0}
+            />
             <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginBottom: "0.2rem" }}>
               chunk #{c.ordering}
               {c.page_number != null && ` · pag. ${c.page_number}`}
@@ -722,7 +739,17 @@ type ReverseProvenanceItem = {
   confidence: number;
 };
 
-function ChunkLineageBadge({ chunkId, session }: { chunkId: string; session: Session }) {
+function ChunkLineageBadge({
+  chunkId,
+  session,
+  hint,
+}: {
+  chunkId: string;
+  session: Session;
+  // Numero di link totali noto dal parent (batch query). Se 0, niente badge
+  // e niente network: skippiamo l'intera query dettaglio.
+  hint: number;
+}) {
   const reverse = useQuery({
     queryKey: ["reverse-provenance", chunkId],
     queryFn: () =>
@@ -732,8 +759,10 @@ function ChunkLineageBadge({ chunkId, session }: { chunkId: string; session: Ses
         session.token,
       ),
     staleTime: 30_000,
+    enabled: hint > 0,
   });
 
+  if (hint === 0) return null;
   if (!reverse.data || reverse.data.count === 0) return null;
 
   // Raggruppa per output_document_id

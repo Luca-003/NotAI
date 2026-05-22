@@ -43,7 +43,7 @@ export function LineageGraph({
   onSelectChunk,
 }: {
   documentId: string;
-  token: string | null;
+  token: string;
   onSelectChunk?: (sourceDocumentId: string, chunkId: string) => void;
 }) {
   const [hoveredSection, setHoveredSection] = useState<string | null>(null);
@@ -52,7 +52,7 @@ export function LineageGraph({
   const lineage = useQuery({
     queryKey: ["doc-lineage", documentId],
     queryFn: () =>
-      apiFetch<LineageNode>(`/v1/documents/${documentId}/lineage`, {}, token ?? undefined),
+      apiFetch<LineageNode>(`/v1/documents/${documentId}/lineage`, {}, token),
   });
 
   const layout = useMemo(() => {

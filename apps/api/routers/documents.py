@@ -458,6 +458,35 @@ async def get_document_lineage_graph(
     }
 
 
+@router.get("/{document_id}/reverse-provenance-counts")
+async def get_document_reverse_provenance_counts(
+    document_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> dict:
+    """Per ciascun chunk del documento di input, quanti link in uscita ha.
+
+    Rimpiazza la chiamata N-volte di /chunks/{id}/reverse-provenance
+    (una per chunk) con UNA query GROUP BY. Usato dal ChunkLineageBadge
+    nel workspace.
+    """
+    del principal
+    import sqlalchemy as sa
+
+    rows = await session.execute(
+        sa.select(
+            ProvenanceLink.source_chunk_id,
+            sa.func.count(ProvenanceLink.id).label("n"),
+        )
+        .join(DocumentChunk, DocumentChunk.id == ProvenanceLink.source_chunk_id)
+        .where(
+            DocumentChunk.document_id == document_id,
+            ProvenanceLink.confidence > 0,
+        )
+        .group_by(ProvenanceLink.source_chunk_id)
+    )
+    counts = {str(chunk_id): n for chunk_id, n in rows.all()}
+    return {"document_id": str(document_id), "counts_by_chunk": counts}
+
+
 @router.get("/chunks/{chunk_id}/reverse-provenance")
 async def get_chunk_reverse_provenance(
     chunk_id: uuid.UUID, principal: TenantDep, session: DbDep
