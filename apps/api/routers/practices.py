@@ -7,7 +7,9 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 
 from apps.api.deps import DbDep, TenantDep
+from apps.api.routers.acts import ActRead
 from notai.contexts.audit.logger import audit_logger
+from notai.contexts.practices.acts_repository import ActRepository
 from notai.contexts.practices.repository import PracticeRepository
 from notai.contexts.practices.schemas import PracticeCreate, PracticeRead
 
@@ -67,3 +69,15 @@ async def get_practice(
     if p is None:
         raise HTTPException(status_code=404, detail="practice not found")
     return PracticeRead.model_validate(p)
+
+
+@router.get("/{practice_id}/acts", response_model=list[ActRead])
+async def list_acts_of_practice(
+    practice_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> list[ActRead]:
+    del principal
+    p_repo = PracticeRepository(session)
+    if (await p_repo.get(practice_id)) is None:
+        raise HTTPException(status_code=404, detail="practice not found")
+    acts = await ActRepository(session).list_by_practice(practice_id)
+    return [ActRead.model_validate(a) for a in acts]

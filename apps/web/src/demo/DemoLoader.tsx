@@ -1,0 +1,185 @@
+// Bottone "Carica scenari demo": crea 3 pratiche + 3 atti via API REST.
+// Da usare dopo aver fatto login (button "Accedi (dev)" in topbar).
+
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { apiFetch, type Session } from "../auth";
+import { DEMO_SCENARIOS, type DemoScenario } from "./scenarios";
+
+type LoadedScenario = {
+  scenario: DemoScenario;
+  practice_id: string;
+  act_id: string;
+};
+
+export function DemoLoader({ session }: { session: Session | null }) {
+  const qc = useQueryClient();
+  const [loaded, setLoaded] = useState<LoadedScenario[]>([]);
+
+  const load = useMutation({
+    mutationFn: async (): Promise<LoadedScenario[]> => {
+      if (!session) throw new Error("Devi prima accedere (button in topbar)");
+      const results: LoadedScenario[] = [];
+      for (const sc of DEMO_SCENARIOS) {
+        // 1. Crea pratica
+        const practice = await apiFetch<{ id: string }>(
+          "/v1/practices",
+          {
+            method: "POST",
+            body: JSON.stringify(sc.practice),
+          },
+          session.token,
+        );
+        // 2. Crea atto associato
+        const act = await apiFetch<{ id: string }>(
+          "/v1/acts",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              ...sc.act,
+              practice_id: practice.id,
+            }),
+          },
+          session.token,
+        );
+        results.push({ scenario: sc, practice_id: practice.id, act_id: act.id });
+      }
+      return results;
+    },
+    onSuccess: (res) => {
+      setLoaded(res);
+      qc.invalidateQueries({ queryKey: ["practices"] });
+    },
+  });
+
+  return (
+    <section style={styles.card}>
+      <div style={styles.header}>
+        <div>
+          <h3 style={styles.title}>Carica scenari demo</h3>
+          <p style={styles.help}>
+            Crea 3 pratiche di esempio (compravendita prima casa, donazione, costituzione SRL)
+            con parti precompilate. Pronte per avviare il workflow dal notaio.
+          </p>
+        </div>
+        <button
+          onClick={() => load.mutate()}
+          disabled={load.isPending || !session}
+          style={styles.button}
+        >
+          {load.isPending ? "Caricamento..." : `Carica ${DEMO_SCENARIOS.length} scenari`}
+        </button>
+      </div>
+
+      {!session && (
+        <div style={styles.warning}>
+          Devi prima fare login (bottone verde "Accedi (dev)" in alto a destra).
+        </div>
+      )}
+
+      {load.isError && (
+        <div style={styles.error}>Errore: {String(load.error)}</div>
+      )}
+
+      {loaded.length > 0 && (
+        <div style={styles.result}>
+          <strong>Pratiche create:</strong>
+          <ul style={{ marginTop: "0.5rem" }}>
+            {loaded.map((l) => (
+              <li key={l.act_id}>
+                {l.scenario.label}{" "}
+                <code style={styles.id}>practice={l.practice_id.slice(0, 8)}…</code>{" "}
+                <code style={styles.id}>act={l.act_id.slice(0, 8)}…</code>
+              </li>
+            ))}
+          </ul>
+          <p style={{ marginTop: "0.75rem", color: "#166534" }}>
+            Vai alla tab <strong>Pratiche</strong> per aprirle e avviare il workflow.
+          </p>
+        </div>
+      )}
+
+      <details style={styles.preview}>
+        <summary style={{ cursor: "pointer", fontWeight: 600, color: "#475569" }}>
+          Cosa contengono gli scenari? ({DEMO_SCENARIOS.length})
+        </summary>
+        <ul style={{ marginTop: "0.75rem" }}>
+          {DEMO_SCENARIOS.map((sc) => (
+            <li key={sc.id} style={{ marginBottom: "0.6rem" }}>
+              <strong>{sc.label}</strong>
+              <div style={{ fontSize: "0.85rem", color: "#64748b", marginTop: "0.2rem" }}>
+                base imponibile: <strong>{sc.workflow_input.base_imponibile.toLocaleString("it-IT")} €</strong>
+                {sc.workflow_input.is_prima_casa && " · prima casa"}
+                {" · "}
+                {sc.workflow_input.parties.length} parti ({sc.workflow_input.parties.map((p) => p.role).join(", ")})
+              </div>
+            </li>
+          ))}
+        </ul>
+      </details>
+    </section>
+  );
+}
+
+const styles = {
+  card: {
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    borderLeft: "4px solid #f97316",
+    borderRadius: 6,
+    padding: "1rem 1.25rem",
+    marginTop: "2rem",
+  } as React.CSSProperties,
+  header: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "1.5rem",
+    marginBottom: "0.5rem",
+  } as React.CSSProperties,
+  title: { margin: 0, fontSize: "1.05rem", color: "#9a3412" },
+  help: { color: "#7c2d12", fontSize: "0.9rem", margin: "0.25rem 0 0" },
+  button: {
+    padding: "0.6rem 1.25rem",
+    background: "#ea580c",
+    color: "white",
+    border: "none",
+    borderRadius: 4,
+    cursor: "pointer",
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+  } as React.CSSProperties,
+  warning: {
+    marginTop: "0.75rem",
+    background: "#fef3c7",
+    color: "#854d0e",
+    padding: "0.5rem 0.75rem",
+    borderRadius: 4,
+    fontSize: "0.85rem",
+  } as React.CSSProperties,
+  error: {
+    marginTop: "0.75rem",
+    background: "#fee2e2",
+    color: "#7f1d1d",
+    padding: "0.5rem 0.75rem",
+    borderRadius: 4,
+    fontSize: "0.85rem",
+  } as React.CSSProperties,
+  result: {
+    marginTop: "0.75rem",
+    background: "#dcfce7",
+    border: "1px solid #86efac",
+    color: "#14532d",
+    padding: "0.75rem 1rem",
+    borderRadius: 4,
+    fontSize: "0.9rem",
+  } as React.CSSProperties,
+  id: {
+    fontSize: "0.78rem",
+    background: "#f1f5f9",
+    padding: "0.1rem 0.4rem",
+    borderRadius: 3,
+    color: "#475569",
+  } as React.CSSProperties,
+  preview: { marginTop: "1rem", fontSize: "0.9rem" } as React.CSSProperties,
+};

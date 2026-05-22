@@ -2,12 +2,14 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSession } from "./auth";
 import { LLMModelPicker } from "./components/LLMModelPicker";
+import { DemoLoader } from "./demo/DemoLoader";
 import { GuidePage } from "./guide/GuidePage";
 import { ModulesPage } from "./modules/ModulesPage";
+import { PracticesPage } from "./practices/PracticesPage";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
-type Tab = "dashboard" | "guide" | "modules";
+type Tab = "dashboard" | "practices" | "guide" | "modules";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("dashboard");
@@ -24,6 +26,9 @@ export function App() {
         <nav style={layout.nav}>
           <NavButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
             Dashboard
+          </NavButton>
+          <NavButton active={tab === "practices"} onClick={() => setTab("practices")}>
+            Pratiche
           </NavButton>
           <NavButton active={tab === "modules"} onClick={() => setTab("modules")}>
             Moduli
@@ -52,7 +57,8 @@ export function App() {
       {error && <div style={layout.errorBar}>Errore login: {error}</div>}
 
       <main style={layout.main}>
-        {tab === "dashboard" && <Dashboard />}
+        {tab === "dashboard" && <Dashboard session={session} />}
+        {tab === "practices" && <PracticesPage session={session} onNeedLogin={login} />}
         {tab === "modules" && <ModulesPage session={session} onNeedLogin={login} />}
         {tab === "guide" && <GuidePage />}
       </main>
@@ -105,7 +111,7 @@ async function fetchReadyz(): Promise<Ready> {
   return res.json();
 }
 
-function Dashboard() {
+function Dashboard({ session }: { session: import("./auth").Session | null }) {
   const health = useQuery({ queryKey: ["health"], queryFn: fetchHealth, refetchInterval: 10_000 });
   const ready = useQuery({ queryKey: ["readyz"], queryFn: fetchReadyz, refetchInterval: 10_000 });
 
@@ -144,6 +150,8 @@ function Dashboard() {
           </div>
         )}
       </section>
+
+      <DemoLoader session={session} />
 
       <LLMModelPicker />
     </div>
