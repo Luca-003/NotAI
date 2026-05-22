@@ -22,9 +22,11 @@ from notai.config import get_settings
 logger = structlog.get_logger(__name__)
 
 
-# Lista vuota per ora: workflow e activities verranno aggiunti nei contesti.
-WORKFLOWS: Sequence[type] = ()
-ACTIVITIES: Sequence = ()
+from notai.contexts.workflow.activities import ALL_ACTIVITIES
+from notai.contexts.workflow.workflows import ALL_WORKFLOWS
+
+WORKFLOWS: Sequence[type] = tuple(ALL_WORKFLOWS)
+ACTIVITIES: Sequence = tuple(ALL_ACTIVITIES)
 
 
 async def _run() -> None:
