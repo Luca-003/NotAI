@@ -6,10 +6,11 @@ import { DemoLoader } from "./demo/DemoLoader";
 import { GuidePage } from "./guide/GuidePage";
 import { ModulesPage } from "./modules/ModulesPage";
 import { PracticesPage } from "./practices/PracticesPage";
+import { WikiPage } from "./wiki/WikiPage";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
-type Tab = "dashboard" | "practices" | "guide" | "modules";
+type Tab = "dashboard" | "practices" | "wiki" | "guide" | "modules";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("dashboard");
@@ -29,6 +30,9 @@ export function App() {
           </NavButton>
           <NavButton active={tab === "practices"} onClick={() => setTab("practices")}>
             Pratiche
+          </NavButton>
+          <NavButton active={tab === "wiki"} onClick={() => setTab("wiki")}>
+            Wiki
           </NavButton>
           <NavButton active={tab === "modules"} onClick={() => setTab("modules")}>
             Moduli
@@ -59,6 +63,7 @@ export function App() {
       <main style={layout.main}>
         {tab === "dashboard" && <Dashboard session={session} />}
         {tab === "practices" && <PracticesPage session={session} onNeedLogin={login} />}
+        {tab === "wiki" && <WikiPage session={session} onNeedLogin={login} />}
         {tab === "modules" && <ModulesPage session={session} onNeedLogin={login} />}
         {tab === "guide" && <GuidePage />}
       </main>

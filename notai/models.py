@@ -18,6 +18,7 @@ from notai.contexts.documents.models import (  # noqa: F401
     DocumentChunk,
     ProvenanceLink,
 )
+from notai.contexts.drafting.examples_models import ActExample  # noqa: F401
 from notai.contexts.iam.models import (  # noqa: F401
     Permission,
     Role,

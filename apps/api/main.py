@@ -25,6 +25,7 @@ from apps.api.routers import (
     ai,
     dev,
     documents,
+    examples as examples_router,
     health,
     llm,
     me,
@@ -91,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(ai.router, prefix="/api/v1")
     app.include_router(modules.router, prefix="/api/v1")
     app.include_router(templates_router.router, prefix="/api/v1")
+    app.include_router(examples_router.router, prefix="/api/v1")
     if settings.env == "dev":
         app.include_router(dev.router, prefix="/api/v1")
 
