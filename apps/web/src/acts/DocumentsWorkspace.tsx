@@ -151,15 +151,20 @@ export function DocumentsWorkspace({
 
   const inputDocs = (docs.data ?? []).filter((d) => isInputKind(d.kind));
   const outputDocs = (docs.data ?? []).filter((d) => !isInputKind(d.kind));
+  const isEmpty = inputDocs.length === 0;
 
   return (
     <section style={styles.card}>
-      <h3 style={styles.title}>Documenti del fascicolo</h3>
+      <h3 style={styles.title}>1. Documenti del fascicolo</h3>
       <p style={styles.help}>
         Carica visure, contratti preliminari, identita', perizie: NotAI li
         catalogo&#769; e li user&#224; per generare la bozza dell'atto, mantenendo
         la tracciabilita&#769; (output &harr; sorgente di input).
       </p>
+
+      {isEmpty && (
+        <ScenarioQuickLoader actId={actId} session={session} onLoaded={() => qc.invalidateQueries({ queryKey: ["docs", actId] })} />
+      )}
 
       <ActSearchBar actId={actId} session={session} onJumpToChunk={(docId, chunkId) => { setSelectedId(docId); setHighlightChunkId(chunkId); }} query={searchQuery} setQuery={setSearchQuery} />
 
@@ -887,6 +892,100 @@ function TextBlob({ url }: { url: string }) {
   if (q.isLoading) return <div>Carico testo...</div>;
   return (
     <pre style={styles.textPreview}>{q.data}</pre>
+  );
+}
+
+// ScenarioQuickLoader: pannello visibile quando il workspace e' vuoto.
+// Offre 6 scenari (3 notarile + 3 legale): click -> upload automatico
+// dei .md predefiniti via /api/v1/dev/scenarios/{id}/upload-to-act/{act}.
+//
+// Per il notaio in demo: niente drag&drop, NotAI carica gia' tutti i documenti
+// di input simulati e parte direttamente con la classificazione.
+const SCENARIO_OPTIONS: { id: string; label: string; group: "notarile" | "legale" }[] = [
+  { id: "compravendita-prima-casa", label: "Compravendita prima casa (Milano)", group: "notarile" },
+  { id: "donazione-genitore-figlio", label: "Donazione genitore -> figlio", group: "notarile" },
+  { id: "costituzione-srl", label: "Costituzione SRL unipersonale", group: "notarile" },
+  { id: "citazione-recupero-credito", label: "Citazione - recupero credito", group: "legale" },
+  { id: "decreto-ingiuntivo-commerciale", label: "Decreto ingiuntivo commerciale", group: "legale" },
+  { id: "separazione-consensuale", label: "Separazione consensuale", group: "legale" },
+];
+
+function ScenarioQuickLoader({
+  actId,
+  session,
+  onLoaded,
+}: {
+  actId: string;
+  session: Session;
+  onLoaded: () => void;
+}) {
+  const load = useMutation({
+    mutationFn: (scenarioId: string) =>
+      apiFetch<{ documents_created: number }>(
+        `/v1/dev/scenarios/${scenarioId}/upload-to-act/${actId}`,
+        { method: "POST" },
+        session.token,
+      ),
+    onSuccess: () => onLoaded(),
+  });
+
+  return (
+    <div
+      style={{
+        background: "#fefce8",
+        border: "1px solid #fde047",
+        borderRadius: 4,
+        padding: "0.75rem 1rem",
+        marginBottom: "1rem",
+      }}
+    >
+      <strong style={{ color: "#854d0e", fontSize: "0.92rem" }}>
+        Demo guidata — carica documenti di esempio
+      </strong>
+      <p style={{ margin: "0.3rem 0 0.6rem", fontSize: "0.85rem", color: "#713f12" }}>
+        Niente drag&amp;drop: scegli uno scenario e NotAI carica i documenti di
+        input gia' pronti da <code>demostuff/case-studies/</code>.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.4rem" }}>
+        {SCENARIO_OPTIONS.map((sc) => (
+          <button
+            key={sc.id}
+            onClick={() => load.mutate(sc.id)}
+            disabled={load.isPending}
+            style={{
+              padding: "0.5rem 0.6rem",
+              background: "white",
+              border: "1px solid #cbd5e1",
+              borderRadius: 4,
+              cursor: load.isPending ? "wait" : "pointer",
+              textAlign: "left",
+              fontSize: "0.85rem",
+            }}
+            title={`Carica i .md di ${sc.id}`}
+          >
+            <span style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>
+              {sc.group}
+            </span>
+            <div style={{ color: "#0f172a" }}>{sc.label}</div>
+          </button>
+        ))}
+      </div>
+      {load.isPending && (
+        <div style={{ marginTop: "0.6rem", fontSize: "0.82rem", color: "#713f12" }}>
+          Carico documenti...
+        </div>
+      )}
+      {load.isError && (
+        <div style={{ marginTop: "0.6rem", fontSize: "0.82rem", color: "#b91c1c" }}>
+          {String(load.error)}
+        </div>
+      )}
+      {load.isSuccess && load.data && (
+        <div style={{ marginTop: "0.6rem", fontSize: "0.82rem", color: "#166534" }}>
+          Caricati {load.data.documents_created} documenti. Aspetta classificazione (~30-70s/chunk).
+        </div>
+      )}
+    </div>
   );
 }
 

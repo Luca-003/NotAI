@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch, type Session } from "../auth";
 import { ActDetail } from "../acts/ActDetail";
+import { Breadcrumb } from "../components/Breadcrumb";
+import { buildHref, type Tab } from "../routing";
 import { s } from "./PracticesPage";
 
 type Practice = {
@@ -37,39 +39,46 @@ const ACT_KINDS = [
 export function PracticeDetail({
   session,
   practiceId,
-  onBack,
+  actId,
+  goto,
 }: {
   session: Session;
   practiceId: string;
-  onBack: () => void;
+  actId: string | null;
+  goto: (tab: Tab, opts?: { practiceId?: string; actId?: string }) => void;
 }) {
-  const [selectedActId, setSelectedActId] = useState<string | null>(null);
-
   const practice = useQuery({
     queryKey: ["practice", practiceId],
     queryFn: () => apiFetch<Practice>(`/v1/practices/${practiceId}`, {}, session.token),
   });
 
-  if (selectedActId) {
+  if (actId) {
     return (
       <ActDetail
         session={session}
-        actId={selectedActId}
-        onBack={() => setSelectedActId(null)}
+        actId={actId}
+        practiceTitle={practice.data?.title ?? "Pratica"}
+        practiceId={practiceId}
+        goto={goto}
       />
     );
   }
 
   return (
     <div>
-      <button onClick={onBack} style={s.secondaryBtn}>← Pratiche</button>
+      <Breadcrumb
+        crumbs={[
+          { label: "Pratiche", href: buildHref("practices") },
+          { label: practice.data?.title ?? "Pratica..." },
+        ]}
+      />
 
       {practice.isLoading && <p style={{ marginTop: "1rem" }}>Carico...</p>}
       {practice.isError && <div style={s.error}>{String(practice.error)}</div>}
 
       {practice.data && (
         <>
-          <header style={{ marginTop: "1rem", marginBottom: "1.5rem" }}>
+          <header style={{ marginBottom: "1.5rem" }}>
             <h1 style={{ margin: 0 }}>{practice.data.title}</h1>
             <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
               <code style={s.kindBadge}>{practice.data.code}</code>
@@ -84,7 +93,7 @@ export function PracticeDetail({
             )}
           </header>
 
-          <ActsSection session={session} practiceId={practiceId} onOpenAct={setSelectedActId} />
+          <ActsSection session={session} practiceId={practiceId} goto={goto} />
         </>
       )}
     </div>
@@ -94,11 +103,11 @@ export function PracticeDetail({
 function ActsSection({
   session,
   practiceId,
-  onOpenAct,
+  goto,
 }: {
   session: Session;
   practiceId: string;
-  onOpenAct: (id: string) => void;
+  goto: (tab: Tab, opts?: { practiceId?: string; actId?: string }) => void;
 }) {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
@@ -122,18 +131,45 @@ function ActsSection({
       setForm({ ...form, title: "" });
       qc.invalidateQueries({ queryKey: ["acts-of", practiceId] });
       qc.setQueryData<Act[]>(["acts-of", practiceId], (old) => [...(old ?? []), act]);
-      onOpenAct(act.id);
+      goto("practices", { practiceId, actId: act.id });
     },
   });
 
+  const hasActs = !!(acts.data && acts.data.length > 0);
+
   return (
-    <section style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: 6, padding: "1rem 1.25rem" }}>
+    <section
+      style={{
+        background: "white",
+        border: hasActs ? "1px solid #e2e8f0" : "2px dashed #cbd5e1",
+        borderRadius: 6,
+        padding: "1rem 1.25rem",
+      }}
+    >
       <div style={s.header}>
-        <h2 style={{ margin: 0, fontSize: "1.15rem" }}>Atti</h2>
+        <h2 style={{ margin: 0, fontSize: "1.15rem" }}>
+          {hasActs ? `Atti della pratica (${acts.data!.length})` : "Atti"}
+        </h2>
         <button onClick={() => setShowForm((v) => !v)} style={s.primaryBtn}>
           {showForm ? "Annulla" : "+ Nuovo atto"}
         </button>
       </div>
+
+      {!hasActs && !showForm && (
+        <div style={{ marginTop: "1rem", color: "#475569" }}>
+          <p style={{ marginTop: 0 }}>
+            <strong>Questa pratica non ha ancora atti.</strong>
+          </p>
+          <p style={{ fontSize: "0.9rem" }}>
+            Un atto e' il documento giuridico principale (compravendita, mutuo,
+            donazione, atto di citazione...). Sotto l'atto si caricano i
+            documenti di input e si avvia il workflow.
+          </p>
+          <button onClick={() => setShowForm(true)} style={{ ...s.primaryBtn, marginTop: "0.5rem" }}>
+            Crea il primo atto
+          </button>
+        </div>
+      )}
 
       {showForm && (
         <form
@@ -168,33 +204,36 @@ function ActsSection({
         </form>
       )}
 
-      {acts.data && acts.data.length === 0 && (
-        <div style={s.emptyList}>
-          Nessun atto in questa pratica. Crea il primo con "+ Nuovo atto".
-        </div>
-      )}
-      {acts.data && acts.data.length > 0 && (
+      {hasActs && (
         <ul style={{ listStyle: "none", padding: 0, marginTop: "1rem" }}>
-          {acts.data.map((a) => (
+          {acts.data!.map((a) => (
             <li
               key={a.id}
-              onClick={() => onOpenAct(a.id)}
+              onClick={() => goto("practices", { practiceId, actId: a.id })}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "white")}
               style={{
-                padding: "0.6rem 0.75rem",
+                padding: "0.75rem 1rem",
                 border: "1px solid #e2e8f0",
                 borderRadius: 4,
-                marginBottom: "0.4rem",
+                marginBottom: "0.5rem",
                 cursor: "pointer",
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
+                background: "white",
+                transition: "background 100ms",
               }}
+              title="Click per aprire l'atto"
             >
               <div>
-                <strong>{a.title}</strong>{" "}
+                <strong style={{ color: "#0f172a" }}>{a.title}</strong>{" "}
                 <code style={{ ...s.kindBadge, marginLeft: "0.5rem" }}>{a.kind}</code>
               </div>
-              <span style={s.statusBadge}>{a.workflow_status}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                <span style={s.statusBadge}>{a.workflow_status}</span>
+                <span style={{ color: "#94a3b8", fontWeight: 700 }}>›</span>
+              </div>
             </li>
           ))}
         </ul>

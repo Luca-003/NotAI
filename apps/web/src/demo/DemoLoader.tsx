@@ -4,6 +4,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch, type Session } from "../auth";
+import { buildHref, type Tab } from "../routing";
 import { DEMO_SCENARIOS, type DemoScenario } from "./scenarios";
 
 type LoadedScenario = {
@@ -12,7 +13,13 @@ type LoadedScenario = {
   act_id: string;
 };
 
-export function DemoLoader({ session }: { session: Session | null }) {
+export function DemoLoader({
+  session,
+  goto,
+}: {
+  session: Session | null;
+  goto: (tab: Tab, opts?: { practiceId?: string; actId?: string }) => void;
+}) {
   const qc = useQueryClient();
   const [loaded, setLoaded] = useState<LoadedScenario[]>([]);
 
@@ -84,18 +91,25 @@ export function DemoLoader({ session }: { session: Session | null }) {
       {loaded.length > 0 && (
         <div style={styles.result}>
           <strong>Pratiche create:</strong>
-          <ul style={{ marginTop: "0.5rem" }}>
+          <div style={{ display: "grid", gap: "0.5rem", marginTop: "0.75rem" }}>
             {loaded.map((l) => (
-              <li key={l.act_id}>
-                {l.scenario.label}{" "}
-                <code style={styles.id}>practice={l.practice_id.slice(0, 8)}…</code>{" "}
-                <code style={styles.id}>act={l.act_id.slice(0, 8)}…</code>
-              </li>
+              <div key={l.act_id} style={styles.loadedCard}>
+                <div style={{ flex: 1 }}>
+                  <strong>{l.scenario.label}</strong>
+                  <div style={{ fontSize: "0.78rem", color: "#475569", marginTop: "0.15rem" }}>
+                    <code style={styles.id}>{l.scenario.practice.code}</code>{" "}
+                    · {l.scenario.workflow_input.parties.length} parti
+                  </div>
+                </div>
+                <a
+                  href={buildHref("practices", { practiceId: l.practice_id, actId: l.act_id })}
+                  style={styles.openBtn}
+                >
+                  Apri atto →
+                </a>
+              </div>
             ))}
-          </ul>
-          <p style={{ marginTop: "0.75rem", color: "#166534" }}>
-            Vai alla tab <strong>Pratiche</strong> per aprirle e avviare il workflow.
-          </p>
+          </div>
         </div>
       )}
 
@@ -182,4 +196,24 @@ const styles = {
     color: "#475569",
   } as React.CSSProperties,
   preview: { marginTop: "1rem", fontSize: "0.9rem" } as React.CSSProperties,
+  loadedCard: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    background: "white",
+    border: "1px solid #86efac",
+    borderRadius: 4,
+    padding: "0.6rem 0.8rem",
+    gap: "1rem",
+  } as React.CSSProperties,
+  openBtn: {
+    background: "#16a34a",
+    color: "white",
+    padding: "0.45rem 0.9rem",
+    borderRadius: 4,
+    textDecoration: "none",
+    fontWeight: 600,
+    fontSize: "0.88rem",
+    whiteSpace: "nowrap",
+  } as React.CSSProperties,
 };

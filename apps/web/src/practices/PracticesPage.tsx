@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch, type Session } from "../auth";
+import { buildHref, type Route, type Tab } from "../routing";
 import { PracticeDetail } from "./PracticeDetail";
 
 type Practice = {
@@ -29,9 +30,17 @@ const PRACTICE_KINDS = [
   "legale.recupero_crediti",
 ];
 
-export function PracticesPage({ session, onNeedLogin }: { session: Session | null; onNeedLogin: () => void }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
+export function PracticesPage({
+  session,
+  onNeedLogin,
+  route,
+  goto,
+}: {
+  session: Session | null;
+  onNeedLogin: () => void;
+  route: Route;
+  goto: (tab: Tab, opts?: { practiceId?: string; actId?: string }) => void;
+}) {
   if (!session) {
     return (
       <div style={s.empty}>
@@ -41,20 +50,27 @@ export function PracticesPage({ session, onNeedLogin }: { session: Session | nul
     );
   }
 
-  if (selectedId) {
+  if (route.practiceId) {
     return (
       <PracticeDetail
         session={session}
-        practiceId={selectedId}
-        onBack={() => setSelectedId(null)}
+        practiceId={route.practiceId}
+        actId={route.actId}
+        goto={goto}
       />
     );
   }
 
-  return <PracticesList session={session} onOpen={setSelectedId} />;
+  return <PracticesList session={session} goto={goto} />;
 }
 
-function PracticesList({ session, onOpen }: { session: Session; onOpen: (id: string) => void }) {
+function PracticesList({
+  session,
+  goto,
+}: {
+  session: Session;
+  goto: (tab: Tab, opts?: { practiceId?: string; actId?: string }) => void;
+}) {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
@@ -76,7 +92,7 @@ function PracticesList({ session, onOpen }: { session: Session; onOpen: (id: str
       setShowForm(false);
       setForm({ ...form, title: "", description: "" });
       qc.invalidateQueries({ queryKey: ["practices", session.token] });
-      onOpen(created.id);
+      goto("practices", { practiceId: created.id });
     },
   });
 
@@ -152,7 +168,7 @@ function PracticesList({ session, onOpen }: { session: Session; onOpen: (id: str
           </thead>
           <tbody>
             {list.data.map((p) => (
-              <tr key={p.id} style={s.tr} onClick={() => onOpen(p.id)}>
+              <tr key={p.id} style={s.tr} onClick={() => goto("practices", { practiceId: p.id })}>
                 <td style={s.td}><code>{p.code}</code></td>
                 <td style={s.td}>{p.title}</td>
                 <td style={s.td}><code style={s.kindBadge}>{p.kind}</code></td>

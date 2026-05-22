@@ -55,6 +55,8 @@ services:
       - ./notai:/app/notai
       - ./apps:/app/apps
       - ./migrations:/app/migrations
+      # demostuff serve all'endpoint /api/v1/dev/scenarios/{id}/upload-to-act/{act}.
+      - ./demostuff:/app/demostuff:ro
     ports: ["8000:8000"]
 
   notai-workers:

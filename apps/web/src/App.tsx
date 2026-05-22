@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { rootUrl, useSession } from "./auth";
 import { LLMModelPicker } from "./components/LLMModelPicker";
@@ -7,11 +6,11 @@ import { GuidePage } from "./guide/GuidePage";
 import { ModulesPage } from "./modules/ModulesPage";
 import { PracticesPage } from "./practices/PracticesPage";
 import { WikiPage } from "./wiki/WikiPage";
-
-type Tab = "dashboard" | "practices" | "wiki" | "guide" | "modules";
+import { buildHref, useRoute, type Tab } from "./routing";
 
 export function App() {
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const { route, goto } = useRoute();
+  const tab = route.tab;
   const { session, loading, error, login, logout } = useSession();
 
   return (
@@ -23,21 +22,11 @@ export function App() {
         </div>
 
         <nav style={layout.nav}>
-          <NavButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
-            Dashboard
-          </NavButton>
-          <NavButton active={tab === "practices"} onClick={() => setTab("practices")}>
-            Pratiche
-          </NavButton>
-          <NavButton active={tab === "wiki"} onClick={() => setTab("wiki")}>
-            Wiki
-          </NavButton>
-          <NavButton active={tab === "modules"} onClick={() => setTab("modules")}>
-            Moduli
-          </NavButton>
-          <NavButton active={tab === "guide"} onClick={() => setTab("guide")}>
-            Guida
-          </NavButton>
+          <NavLink href={buildHref("dashboard")} active={tab === "dashboard"}>Dashboard</NavLink>
+          <NavLink href={buildHref("practices")} active={tab === "practices"}>Pratiche</NavLink>
+          <NavLink href={buildHref("wiki")} active={tab === "wiki"}>Wiki</NavLink>
+          <NavLink href={buildHref("modules")} active={tab === "modules"}>Moduli</NavLink>
+          <NavLink href={buildHref("guide")} active={tab === "guide"}>Guida</NavLink>
         </nav>
 
         <div style={layout.session}>
@@ -59,8 +48,15 @@ export function App() {
       {error && <div style={layout.errorBar}>Errore login: {error}</div>}
 
       <main style={layout.main}>
-        {tab === "dashboard" && <Dashboard session={session} />}
-        {tab === "practices" && <PracticesPage session={session} onNeedLogin={login} />}
+        {tab === "dashboard" && <Dashboard session={session} goto={goto} />}
+        {tab === "practices" && (
+          <PracticesPage
+            session={session}
+            onNeedLogin={login}
+            route={route}
+            goto={goto}
+          />
+        )}
         {tab === "wiki" && <WikiPage session={session} onNeedLogin={login} />}
         {tab === "modules" && <ModulesPage session={session} onNeedLogin={login} />}
         {tab === "guide" && <GuidePage />}
@@ -73,25 +69,27 @@ export function App() {
   );
 }
 
-function NavButton({
+function NavLink({
+  href,
   active,
-  onClick,
   children,
 }: {
+  href: string;
   active: boolean;
-  onClick: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <button
-      onClick={onClick}
+    <a
+      href={href}
       style={{
         ...layout.navBtn,
         ...(active ? layout.navBtnActive : {}),
+        textDecoration: "none",
+        display: "inline-block",
       }}
     >
       {children}
-    </button>
+    </a>
   );
 }
 
@@ -107,7 +105,13 @@ async function fetchReadyz(): Promise<Ready> {
   return res.json();
 }
 
-function Dashboard({ session }: { session: import("./auth").Session | null }) {
+function Dashboard({
+  session,
+  goto,
+}: {
+  session: import("./auth").Session | null;
+  goto: (tab: Tab, opts?: { practiceId?: string; actId?: string }) => void;
+}) {
   // Una sola query: /readyz e' superset di /health (se ready=ok l'API e' viva
   // per definizione). Risparmia un endpoint di polling ogni 10s.
   const ready = useQuery({ queryKey: ["readyz"], queryFn: fetchReadyz, refetchInterval: 10_000 });
@@ -147,7 +151,7 @@ function Dashboard({ session }: { session: import("./auth").Session | null }) {
         )}
       </section>
 
-      <DemoLoader session={session} />
+      <DemoLoader session={session} goto={goto} />
 
       <LLMModelPicker />
     </div>

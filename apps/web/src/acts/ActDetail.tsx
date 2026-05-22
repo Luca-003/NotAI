@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch, type Session } from "../auth";
+import { Breadcrumb } from "../components/Breadcrumb";
+import { buildHref, type Tab } from "../routing";
 // apiFetch usato in mutations DraftViewer (provenance confirm/remove)
 import { DocumentsWorkspace } from "./DocumentsWorkspace";
 import { LineageGraph } from "./LineageGraph";
@@ -70,12 +72,18 @@ const ACTIVE_STATUSES = new Set([
 export function ActDetail({
   session,
   actId,
-  onBack,
+  practiceTitle,
+  practiceId,
+  goto,
 }: {
   session: Session;
   actId: string;
-  onBack: () => void;
+  practiceTitle: string;
+  practiceId: string;
+  goto: (tab: Tab, opts?: { practiceId?: string; actId?: string }) => void;
 }) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _ = goto; // riservato a future navigation interne
   const qc = useQueryClient();
   const [showStart, setShowStart] = useState(false);
   // Stato condiviso per traceability: chunk evidenziato (selezionato dalle source
@@ -114,22 +122,38 @@ export function ActDetail({
     },
   });
 
+  const currentStatus = wfStatus.data?.state.status ?? act.data?.workflow_status ?? "bozza";
+
   return (
     <div>
-      <button onClick={onBack} style={s.secondaryBtn}>← Pratica</button>
+      <Breadcrumb
+        crumbs={[
+          { label: "Pratiche", href: buildHref("practices") },
+          { label: practiceTitle, href: buildHref("practices", { practiceId }) },
+          { label: act.data?.title ?? "Atto..." },
+        ]}
+      />
 
       {act.isLoading && <p style={{ marginTop: "1rem" }}>Carico...</p>}
       {act.isError && <div style={s.error}>{String(act.error)}</div>}
 
       {act.data && (
         <>
-          <header style={{ marginTop: "1rem", marginBottom: "1.5rem" }}>
+          <header style={{ marginBottom: "1.5rem" }}>
             <h1 style={{ margin: 0 }}>{act.data.title}</h1>
             <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
               <code style={s.kindBadge}>{act.data.kind}</code>
-              <span style={s.statusBadge}>{act.data.workflow_status}</span>
+              <span style={s.statusBadge}>{currentStatus}</span>
             </div>
           </header>
+
+          {/* Pannello "cosa fare adesso" - sempre visibile, contesto-aware */}
+          <NextStepBanner
+            status={currentStatus}
+            hasWorkflow={!!act.data.workflow_run_id}
+            showStart={showStart}
+            onStart={() => setShowStart(true)}
+          />
 
           <DocumentsWorkspace
             session={session}
@@ -140,13 +164,13 @@ export function ActDetail({
 
           {!act.data.workflow_run_id && !showStart && (
             <section style={card}>
-              <h3 style={{ marginTop: 0 }}>Workflow non avviato</h3>
+              <h3 style={{ marginTop: 0 }}>2. Avvia il workflow</h3>
               <p style={{ color: "#475569" }}>
-                Avvia il workflow per eseguire le visure pre-atto, generare la bozza,
-                calcolare le imposte e aprire la review.
+                Il workflow esegue le visure pre-atto (mock), genera la bozza dal
+                template, calcola le imposte e apre la review per il notaio.
               </p>
-              <button onClick={() => setShowStart(true)} style={s.primaryBtn}>
-                Avvia workflow atto
+              <button onClick={() => setShowStart(true)} style={{ ...s.primaryBtn, fontSize: "1rem", padding: "0.6rem 1.4rem" }}>
+                ▶ Avvia workflow atto
               </button>
             </section>
           )}
@@ -773,3 +797,120 @@ const partyRow: React.CSSProperties = {
   marginBottom: "0.4rem",
   alignItems: "center",
 };
+
+// ---------------------------------------------------------------------------
+// NextStepBanner — pannello "cosa fare adesso", visible all the time per
+// orientare il notaio. Cambia copy + colore in base allo stato del workflow.
+// ---------------------------------------------------------------------------
+
+function NextStepBanner({
+  status,
+  hasWorkflow,
+  showStart,
+  onStart,
+}: {
+  status: string;
+  hasWorkflow: boolean;
+  showStart: boolean;
+  onStart: () => void;
+}) {
+  type Step = { title: string; body: string; cta?: { label: string; onClick: () => void } | null; tone: "info" | "action" | "done" };
+  let step: Step;
+
+  if (!hasWorkflow && !showStart) {
+    step = {
+      tone: "action",
+      title: "1. Carica i documenti di input",
+      body:
+        "Trascina (o usa 'Aggiungi file') i documenti dell'atto nel workspace qui sotto: visure catastali, ipocatastali, contratti, documenti d'identita'. Il sistema li classifica e tagga automaticamente.",
+      cta: null,
+    };
+  } else if (!hasWorkflow && showStart) {
+    step = {
+      tone: "action",
+      title: "2. Configura e avvia il workflow",
+      body:
+        "Seleziona il template dell'atto, conferma le parti e l'imponibile. Il workflow farà visure mock, genera la bozza e calcola le imposte.",
+      cta: null,
+    };
+  } else if (status === "visure_in_corso" || status === "draft_in_corso") {
+    step = {
+      tone: "info",
+      title: `Workflow in corso: ${status}`,
+      body:
+        "Il sistema sta lavorando: visure parallele, generazione bozza, calcolo imposte. Pochi secondi.",
+      cta: null,
+    };
+  } else if (status === "review_requested") {
+    step = {
+      tone: "action",
+      title: "3. Review del notaio",
+      body:
+        "Tutto pronto. Controlla visure + bozza + imposte qui sotto, e usa i bottoni 'Approva' / 'Modifiche' / 'Rifiuta' nella sezione gialla.",
+      cta: null,
+    };
+  } else if (status === "review_completed") {
+    step = {
+      tone: "done",
+      title: "Atto firmato",
+      body:
+        "La review e' stata approvata. In produzione segue firma qualificata + registrazione + conservazione.",
+      cta: null,
+    };
+  } else {
+    step = {
+      tone: "info",
+      title: `Stato: ${status}`,
+      body: "",
+      cta: null,
+    };
+  }
+
+  // Hint sull'azione di avvio workflow se sei nello step 1 e hai docs ma non hai
+  // ancora avviato.
+  if (!hasWorkflow && !showStart) {
+    step.cta = { label: "Salta upload e avvia subito", onClick: onStart };
+  }
+
+  const palette: Record<Step["tone"], { bg: string; border: string; fg: string }> = {
+    action: { bg: "#eff6ff", border: "#3b82f6", fg: "#1e3a8a" },
+    info: { bg: "#f8fafc", border: "#94a3b8", fg: "#1e293b" },
+    done: { bg: "#dcfce7", border: "#16a34a", fg: "#14532d" },
+  };
+  const p = palette[step.tone];
+
+  return (
+    <section
+      style={{
+        background: p.bg,
+        borderLeft: `4px solid ${p.border}`,
+        borderRadius: 4,
+        padding: "0.9rem 1.25rem",
+        marginBottom: "1rem",
+      }}
+    >
+      <h3 style={{ margin: 0, color: p.fg, fontSize: "1.05rem" }}>{step.title}</h3>
+      {step.body && (
+        <p style={{ margin: "0.4rem 0 0", color: p.fg, fontSize: "0.92rem" }}>{step.body}</p>
+      )}
+      {step.cta && (
+        <button
+          onClick={step.cta.onClick}
+          style={{
+            marginTop: "0.75rem",
+            padding: "0.45rem 1rem",
+            background: p.border,
+            color: "white",
+            border: "none",
+            borderRadius: 4,
+            cursor: "pointer",
+            fontWeight: 600,
+            fontSize: "0.9rem",
+          }}
+        >
+          {step.cta.label}
+        </button>
+      )}
+    </section>
+  );
+}
