@@ -8,9 +8,13 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from sqlalchemy import select
+
 from apps.api.deps import DbDep, TenantDep
 from apps.api.deps_modules import module_required
+from apps.api.routers.documents import DocumentRead
 from notai.contexts.audit.logger import audit_logger
+from notai.contexts.documents.models import Document
 from notai.contexts.practices.acts_repository import ActRepository
 from notai.contexts.workflow.client import get_temporal_client
 from notai.contexts.workflow.common import (
@@ -245,3 +249,19 @@ async def signal_human_review(
     await handle.signal("human_review_response", response)
 
     return {"signaled": True, "workflow_id": wf_id}
+
+
+@router.get("/{act_id}/documents", response_model=list[DocumentRead])
+async def list_documents_of_act(
+    act_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> list[DocumentRead]:
+    """Lista documenti dell'atto (input + output), ordine cronologico ascendente."""
+    del principal
+    if (await ActRepository(session).get(act_id)) is None:
+        raise HTTPException(status_code=404, detail="act not found")
+    rows = await session.execute(
+        select(Document)
+        .where(Document.act_id == act_id, Document.deleted_at.is_(None))
+        .order_by(Document.created_at.asc())
+    )
+    return [DocumentRead.model_validate(d) for d in rows.scalars().all()]

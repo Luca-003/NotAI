@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch, type Session } from "../auth";
+import { DocumentsWorkspace } from "./DocumentsWorkspace";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 import { s } from "../practices/PracticesPage";
@@ -119,6 +120,8 @@ export function ActDetail({
               <span style={s.statusBadge}>{act.data.workflow_status}</span>
             </div>
           </header>
+
+          <DocumentsWorkspace session={session} actId={actId} />
 
           {!act.data.workflow_run_id && !showStart && (
             <section style={card}>

@@ -23,14 +23,13 @@ def _client() -> Minio:
     )
 
 
-async def put_text(
+async def put_blob(
     bucket: str,
     key: str,
-    content: str,
-    content_type: str = "text/markdown",
+    data: bytes,
+    content_type: str,
 ) -> tuple[str, str]:
-    """Carica una stringa su MinIO. Ritorna (storage_uri, sha256_hex)."""
-    data = content.encode("utf-8")
+    """Carica un blob binario su MinIO. Ritorna (storage_uri, sha256_hex)."""
     sha = hashlib.sha256(data).hexdigest()
 
     def _put() -> None:
@@ -46,18 +45,34 @@ async def put_text(
     return f"s3://{bucket}/{key}", sha
 
 
-async def get_text(bucket: str, key: str) -> str:
-    """Legge un oggetto da MinIO come stringa UTF-8."""
+async def put_text(
+    bucket: str,
+    key: str,
+    content: str,
+    content_type: str = "text/markdown",
+) -> tuple[str, str]:
+    """Carica una stringa su MinIO. Ritorna (storage_uri, sha256_hex)."""
+    return await put_blob(bucket, key, content.encode("utf-8"), content_type)
 
-    def _get() -> str:
+
+async def get_blob(bucket: str, key: str) -> bytes:
+    """Legge un oggetto da MinIO come bytes."""
+
+    def _get() -> bytes:
         r = _client().get_object(bucket, key)
         try:
-            return r.read().decode("utf-8")
+            return r.read()
         finally:
             r.close()
             r.release_conn()
 
     return await asyncio.to_thread(_get)
+
+
+async def get_text(bucket: str, key: str) -> str:
+    """Legge un oggetto da MinIO come stringa UTF-8."""
+    data = await get_blob(bucket, key)
+    return data.decode("utf-8")
 
 
 def parse_storage_uri(uri: str) -> tuple[str, str]:
@@ -71,4 +86,10 @@ def parse_storage_uri(uri: str) -> tuple[str, str]:
     return bucket, key
 
 
-__all__ = ["get_text", "parse_storage_uri", "put_text"]
+__all__ = [
+    "get_blob",
+    "get_text",
+    "parse_storage_uri",
+    "put_blob",
+    "put_text",
+]

@@ -1,19 +1,34 @@
-"""Endpoint /api/v1/documents/* - metadata + contenuto blob da MinIO."""
+"""Endpoint /api/v1/documents/* - upload, metadata, contenuto blob da MinIO."""
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from apps.api.deps import DbDep, TenantDep
+from notai.contexts.audit.logger import audit_logger
 from notai.contexts.documents.models import Document
-from notai.contexts.documents.storage import get_text, parse_storage_uri
+from notai.contexts.documents.storage import get_blob, parse_storage_uri, put_blob
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+DEFAULT_BUCKET = "notai-documents"
+
+# Mime type accettati in upload (whitelist per evitare blob arbitrari)
+ALLOWED_MIME_PREFIXES = (
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats",
+    "application/vnd.oasis.opendocument",
+    "text/",
+    "image/",
+)
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024   # 50 MB
 
 
 class DocumentRead(BaseModel):
@@ -30,6 +45,7 @@ class DocumentRead(BaseModel):
     storage_uri: str
     sha256: str
     version: int
+    created_at: datetime
 
 
 async def _load_doc(session, doc_id: uuid.UUID) -> Document:
@@ -39,6 +55,97 @@ async def _load_doc(session, doc_id: uuid.UUID) -> Document:
     if doc is None:
         raise HTTPException(status_code=404, detail="document not found")
     return doc
+
+
+# ---------------------------------------------------------------------------
+# Upload
+# ---------------------------------------------------------------------------
+
+
+@router.post("", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
+async def upload_document(
+    principal: TenantDep,
+    session: DbDep,
+    file: UploadFile = File(...),
+    kind: str = Form("input_source"),
+    practice_id: uuid.UUID | None = Form(None),
+    act_id: uuid.UUID | None = Form(None),
+) -> DocumentRead:
+    """Upload di un documento di input nel fascicolo.
+
+    `kind` consigliato:
+      - "input_source"  -> documento fornito dal notaio per generare l'atto
+      - "allegato"      -> allegato non sostanziale
+      - "atto_firmato"  -> versione firmata (riservato; verra' validato altrove)
+    """
+    mime = file.content_type or "application/octet-stream"
+    if not any(mime.startswith(p) for p in ALLOWED_MIME_PREFIXES):
+        raise HTTPException(
+            status_code=415,
+            detail=f"mime type non consentito: {mime}",
+        )
+
+    data = await file.read()
+    if len(data) == 0:
+        raise HTTPException(status_code=400, detail="file vuoto")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"file troppo grande (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)",
+        )
+
+    if act_id is None and practice_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="serve almeno uno tra act_id e practice_id",
+        )
+
+    doc_id = uuid.uuid4()
+    safe_name = (file.filename or "doc").replace("/", "_").replace("\\", "_")
+    key_scope = f"act/{act_id}" if act_id else f"practice/{practice_id}"
+    key = f"input/{principal.tenant_id}/{key_scope}/{doc_id}/{safe_name}"
+
+    storage_uri, sha = await put_blob(DEFAULT_BUCKET, key, data, mime)
+
+    doc = Document(
+        id=doc_id,
+        tenant_id=principal.tenant_id,
+        practice_id=practice_id,
+        act_id=act_id,
+        kind=kind,
+        filename=safe_name,
+        mime_type=mime,
+        size_bytes=len(data),
+        storage_uri=storage_uri,
+        sha256=sha,
+        retention_class="nessuna",
+        extra={"uploaded_at": datetime.now(timezone.utc).isoformat()},
+    )
+    session.add(doc)
+    await session.flush()
+
+    await audit_logger.append(
+        session=session,
+        tenant_id=principal.tenant_id,
+        stream_id=f"act:{act_id}" if act_id else f"practice:{practice_id}",
+        type="document.uploaded",
+        payload={
+            "document_id": str(doc_id),
+            "filename": safe_name,
+            "mime_type": mime,
+            "size_bytes": len(data),
+            "sha256": sha,
+            "kind": kind,
+        },
+        actor=principal.as_actor(),
+    )
+
+    return DocumentRead.model_validate(doc)
+
+
+# ---------------------------------------------------------------------------
+# Read
+# ---------------------------------------------------------------------------
 
 
 @router.get("/{document_id}", response_model=DocumentRead)
@@ -54,22 +161,52 @@ async def get_document_meta(
 async def get_document_content(
     document_id: uuid.UUID, principal: TenantDep, session: DbDep
 ) -> Response:
-    """Stream del contenuto del documento da MinIO. Per ora solo text/markdown."""
+    """Stream del contenuto del documento da MinIO. Supporta qualsiasi mime."""
     del principal
     doc = await _load_doc(session, document_id)
     try:
         bucket, key = parse_storage_uri(doc.storage_uri)
-        content = await get_text(bucket, key)
+        content = await get_blob(bucket, key)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(
             status_code=503,
             detail=f"storage backend unavailable: {type(e).__name__}",
         ) from e
+
+    # `inline` per i tipi visualizzabili nel browser (pdf, img, text/md);
+    # `attachment` per gli altri (download forzato).
+    inline_mimes = ("application/pdf", "image/", "text/")
+    disposition = "inline" if any(doc.mime_type.startswith(p) for p in inline_mimes) else "attachment"
+
     return Response(
         content=content,
-        media_type=doc.mime_type or "text/plain",
+        media_type=doc.mime_type or "application/octet-stream",
         headers={
-            "Content-Disposition": f'inline; filename="{doc.filename}"',
+            "Content-Disposition": f'{disposition}; filename="{doc.filename}"',
             "X-Sha256": doc.sha256,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Soft delete
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(
+    document_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> Response:
+    doc = await _load_doc(session, document_id)
+    if doc.deleted_at is not None:
+        return Response(status_code=204)
+    doc.deleted_at = datetime.now(timezone.utc)
+    await audit_logger.append(
+        session=session,
+        tenant_id=principal.tenant_id,
+        stream_id=f"act:{doc.act_id}" if doc.act_id else f"practice:{doc.practice_id}",
+        type="document.deleted",
+        payload={"document_id": str(document_id), "filename": doc.filename},
+        actor=principal.as_actor(),
+    )
+    return Response(status_code=204)
