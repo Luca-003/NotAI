@@ -40,7 +40,9 @@ L'app è organizzata in **moduli attivabili**: ogni studio può scegliere quali 
     body: `
 ### 1. Accedi
 
-In ambiente di sviluppo, il tenant viene creato via \`POST /api/v1/dev/bootstrap\` (vedi smoke script). In produzione: registrazione SSO/SAML (Fase 5+).
+In ambiente di sviluppo basta un click sul bottone verde **"Accedi (dev)"**
+nella topbar: emette un JWT temporaneo e crea il tenant demo se non esiste.
+In produzione: registrazione SSO/SAML (Fase 5+).
 
 ### 2. Crea una pratica
 
@@ -53,11 +55,72 @@ Dal menu **Pratiche** -> "Nuova". Specifica:
 
 ### 3. Aggiungi atti alla pratica
 
-Una pratica può contenere uno o più atti. Ogni atto ha il proprio workflow indipendente.
+Una pratica può contenere uno o più atti. Ogni atto ha il proprio workflow
+indipendente e il proprio workspace documenti.
 
-### 4. Avvia il workflow
+### 4. Carica documenti nell'atto
 
-Per atti notarili: il workflow esegue **visure pre-atto in parallelo**, genera la **bozza** da template, calcola le **imposte**, e apre un **HumanTask di review** per la conferma del notaio. Solo dopo l'approvazione l'atto procede verso firma e registrazione.
+Apri l'atto -> sezione **Workspace documenti** -> drag&drop dei file. Il sistema
+li classifica e tagga automaticamente (vedi "Workspace documenti di pratica/atto").
+
+### 5. Avvia il workflow
+
+Per atti notarili: il workflow esegue **visure pre-atto in parallelo**, genera la
+**bozza** da template, calcola le **imposte**, e apre un **HumanTask di review**
+per la conferma del notaio. Solo dopo l'approvazione l'atto procede verso firma
+e registrazione.
+
+Per atti legali: il workflow skippa il calcolo imposte e si concentra su
+generazione + review.
+
+### 6. Verifica la provenance
+
+Apri la bozza generata: ogni sezione mostra "ⓘ N fonti" con i chunk dei
+documenti di input usati. Clicca **"vedi lineage grafico"** per vedere il
+grafo completo input -> chunk -> sezioni.
+    `,
+  },
+  {
+    slug: "demo-end-to-end",
+    title: "Demo end-to-end con case studies",
+    category: "intro",
+    summary: "Provare NotAI in 5 minuti con dati pre-caricati.",
+    body: `
+NotAI include **6 case studies pronti** in \`demostuff/case-studies/\`:
+
+**Notarile**:
+- \`compravendita-prima-casa\` — Rossi vende a Bianchi appartamento Milano, prima casa
+- \`donazione-genitore-figlio\` — Verdi dona immobile al figlio Andrea (linea retta)
+- \`costituzione-srl\` — Ferrari costituisce Acme Tech SRL unipersonale
+
+**Legale**:
+- \`citazione-recupero-credito\` — Alfa Srl cita Beta Srl (fatture insolute 54k€)
+- \`decreto-ingiuntivo-commerciale\` — Gamma chiede DI a Delta Trade (18k€)
+- \`separazione-consensuale\` — coniugi Greco-Esposito via negoziazione assistita
+
+### Come provare uno scenario
+
+1. **Accedi** (bottone "Accedi (dev)").
+2. Dashboard -> "**Carica scenari demo**" (popola le 6 pratiche).
+3. Vai a **Pratiche**, scegli uno scenario.
+4. Apri l'atto -> **Workspace documenti** -> upload dei file \`.md\` della
+   cartella corrispondente in \`demostuff/case-studies/<scenario>/\`.
+5. Attendi 5-10s che parsing + classificazione completino.
+6. Click **"Avvia workflow atto"** -> seleziona il template suggerito.
+7. Vedi: visure (mock), bozza generata, imposte, review umano.
+8. **Conferma** la review e ispeziona la **provenance** + il **lineage grafico**.
+
+### Corpus RAG
+
+In \`demorag/\` ci sono 18 documenti (normativa, formulari, giurisprudenza,
+dottrina) per popolare la **wiki**. Comando di import:
+
+\`\`\`
+docker compose exec notai-api python -m demorag.seed
+\`\`\`
+
+Dopodiché la tab **Wiki** mostra il corpus e \`POST /api/v1/wiki/search\`
+risponde a query ibride.
     `,
   },
 
@@ -97,6 +160,156 @@ Il workflow di un atto notarile è gestito da **Temporal** come processo durable
 6. **review_completed** | **rejected** | **needs_changes** -> esito review
 
 Ogni step produce un evento nell'**audit chain** dell'atto. I retry e i timeout sono gestiti da Temporal; il notaio può interrompere con un signal di cancel.
+    `,
+  },
+  {
+    slug: "workspace-documenti",
+    title: "Workspace documenti di pratica/atto",
+    category: "domain",
+    summary: "Cartella per atto: upload, classificazione automatica, anteprima.",
+    body: `
+Ogni atto ha un proprio **workspace documenti**: una cartella virtuale dove il
+notaio o l'avvocato carica tutti i documenti di input (visure, contratti, identità,
+allegati). Il sistema li processa automaticamente:
+
+1. **Upload** (drag & drop o file picker) -> blob salvato in MinIO con sha256,
+   versioning, retention class.
+2. **Parsing** -> testo estratto (oggi: markdown/PDF/DOC; OCR Tesseract in roadmap).
+3. **Chunking** -> testo spezzato in chunk semantici (~500 token, overlap 50).
+4. **Embedding** -> ogni chunk vettorizzato con \`BGE-M3\` o equivalente.
+5. **Indexing** -> chunk indicizzati su Qdrant (dense) e OpenSearch (BM25).
+6. **Classificazione LLM** -> ogni chunk taggato con \`document_type\` ("visura
+   catastale", "contratto fornitura", ...) ed \`entity_type\` (parte, immobile,
+   importo, data, riferimento normativo, ...).
+
+L'ingestion è asincrona: il bottone "Aggiorna" nel workspace mostra lo stato
+\`ingestion_status\` (pending / parsing / chunking / classified / failed).
+
+### Lineage Badge
+
+Ogni chunk classificato ha un piccolo badge che mostra **dove è stato usato**:
+se questo chunk è già stato linkato a sezioni di atti di output, il badge si
+illumina e il notaio può navigare bidirezionalmente.
+    `,
+  },
+  {
+    slug: "traceability-provenance",
+    title: "Lineage delle informazioni — provenance",
+    category: "domain",
+    summary: "Da una sezione dell'atto, risali ai chunk di input. E viceversa.",
+    body: `
+Vincolo fondamentale di NotAI: **ogni informazione in un atto generato deve
+essere tracciabile fino al documento di input da cui proviene**. Questa è la
+spina dorsale del *zero-allucinazione*: niente esce in output se non è ancorato.
+
+### Modello
+
+\`\`\`
+ProvenanceLink:
+  output_document_id  -> atto generato
+  output_section_id   -> identificativo sezione (es. "parti", "oggetto")
+  source_document_id  -> documento di input
+  source_chunk_id     -> chunk specifico del documento di input
+  relation            -> "extracted_from", "based_on", "verified_against", ...
+  rationale           -> motivazione testuale (perché questo link)
+  confidence          -> [0,1] — 1.0 se confermato manualmente
+\`\`\`
+
+### Generazione
+
+Quando il workflow genera la bozza, l'attività \`generate_provenance_graph\`
+costruisce questi link in base a:
+
+- match euristico tra entità (CF, P.IVA, indirizzo, importo) menzionate nella
+  sezione e estratte come \`entity_type\` nei chunk di input;
+- corrispondenza di \`document_type\` (la sezione "visure catastali" si linka
+  ai chunk classificati come \`document_type: visura_catastale\`).
+
+### Navigazione UI bidirezionale
+
+- **Dalla sezione dell'atto -> chunk sorgente**: in DraftViewer, ogni sezione
+  mostra un dettaglio "ⓘ N fonti". Espandi, vedi i chunk sorgente con relation
+  e rationale, e clicca **"↗ apri fonte"** per saltare al chunk nel workspace.
+
+- **Dal chunk -> output dove è stato usato**: nel workspace, il
+  \`ChunkLineageBadge\` mostra "→ usato in N atti" con link diretti.
+
+### Approvazione manuale
+
+Il notaio può:
+
+- **✓ Confermare** un link (confidence -> 1.0, badge verde).
+- **✗ Rimuovere** un link (confidence -> 0.0, escluso dai grafi ma resta in DB
+  per audit e per training futuro).
+
+Tutte le azioni sono tracciate in audit (\`provenance.link_confirmed/rejected/removed\`).
+
+### Lineage grafico
+
+Toggle **"vedi lineage grafico"** in DraftViewer apre un SVG a 3 colonne:
+
+\`\`\`
+Documenti input -> Chunk -> Sezioni atto
+\`\`\`
+
+Hover su un nodo isola i suoi collegamenti; click su un chunk lo apre nel
+workspace. Utile per vedere "in colpo d'occhio" se ci sono sezioni senza fonti
+(possibili allucinazioni!) o chunk inutilizzati.
+    `,
+  },
+  {
+    slug: "multi-vertical",
+    title: "Multi-vertical: notarile + legale + custom",
+    category: "domain",
+    summary: "Aggiungere templates di nuovi atti via file YAML.",
+    body: `
+NotAI supporta **due verticali principali** out-of-the-box:
+
+- **notarile**: compravendita, donazione, costituzione SRL, ... — workflow
+  include calcolo imposte (registro/ipo/cat).
+- **legale**: atto di citazione, decreto ingiuntivo, separazione consensuale,
+  ... — workflow skippa il tax_calculate (le imposte di registro funzionano
+  diversamente per atti giudiziari) e include altri step.
+
+### Aggiungere un template
+
+Crea un file YAML in \`notai/templates/<categoria>/<nome>.yaml\`:
+
+\`\`\`yaml
+id: legale.appello_civile:v1
+name: "Atto di appello civile"
+category: legale
+subcategory: contenzioso
+description: "Appello avverso sentenza di primo grado"
+requires_modules: [legale.workflow]
+tags: [norm:cpc.art.339, act_type:legale.appello]
+workflow_skip_steps: [tax_calculate, visure_catastali]
+slot_schema:
+  type: object
+  required: [appellante, appellato, sentenza_impugnata]
+  properties:
+    appellante: { type: string }
+    ...
+sections:
+  - id: intestazione
+    title: "INTESTAZIONE"
+    text_template: |
+      Per: {{appellante}}
+      Contro: {{appellato}}
+      ...
+    relies_on: [appellante, appellato]
+\`\`\`
+
+Endpoint \`POST /api/v1/templates/reload\` ricarica il registry senza restart.
+
+### Wiki / RAG di atti catalogati
+
+Quando un atto viene firmato e approvato, il notaio può **catalogarlo** in wiki
+(\`/api/v1/wiki/acts\`). Gli atti catalogati alimentano il RAG per:
+
+- suggerire clausole simili da atti precedenti;
+- mostrare output attesi per nuovi atti dello stesso \`template_id\`;
+- ricerca testuale + semantica via Qdrant + ILIKE.
     `,
   },
   {
