@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from apps.api.deps import DbDep, TenantDep
 from notai.contexts.audit.logger import audit_logger
@@ -263,6 +263,80 @@ async def get_document_sections(
         "filename": doc.filename,
         "kind": doc.kind,
         "sections": doc.sections or [],
+    }
+
+
+@router.delete("/provenance/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_provenance_link(
+    link_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> Response:
+    """Rimuove un link di provenance (il notaio lo ha valutato come errato)."""
+    link = (
+        await session.execute(select(ProvenanceLink).where(ProvenanceLink.id == link_id))
+    ).scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status_code=404, detail="provenance link not found")
+    section_id = link.output_section_id
+    out_doc_id = link.output_document_id
+    source_chunk_id = link.source_chunk_id
+    rationale = link.rationale
+    await session.execute(
+        delete(ProvenanceLink).where(ProvenanceLink.id == link_id)
+    )
+    await audit_logger.append(
+        session=session,
+        tenant_id=principal.tenant_id,
+        stream_id=f"provenance:{out_doc_id}",
+        type="provenance.link_removed",
+        payload={
+            "link_id": str(link_id),
+            "section_id": section_id,
+            "source_chunk_id": str(source_chunk_id),
+            "rationale": rationale,
+        },
+        actor=principal.as_actor(),
+    )
+    return Response(status_code=204)
+
+
+class ProvenanceConfirm(BaseModel):
+    confirmed: bool
+
+
+@router.put("/provenance/{link_id}/confirm")
+async def confirm_provenance_link(
+    link_id: uuid.UUID,
+    payload: ProvenanceConfirm,
+    principal: TenantDep,
+    session: DbDep,
+) -> dict:
+    """Notaio valida (confidence 1.0) o smarca (0.0) un link automatico.
+
+    Il link resta in DB (utile per training futuro / audit) ma viene
+    nascosto dall'UI quando confidence == 0.
+    """
+    link = (
+        await session.execute(select(ProvenanceLink).where(ProvenanceLink.id == link_id))
+    ).scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status_code=404, detail="provenance link not found")
+    link.confidence = 1.0 if payload.confirmed else 0.0
+    extra = dict(link.extra or {})
+    extra["confirmed_by_user"] = payload.confirmed
+    extra["confirmed_at"] = datetime.now(timezone.utc).isoformat()
+    link.extra = extra
+    await audit_logger.append(
+        session=session,
+        tenant_id=principal.tenant_id,
+        stream_id=f"provenance:{link.output_document_id}",
+        type="provenance.link_confirmed" if payload.confirmed else "provenance.link_rejected",
+        payload={"link_id": str(link_id), "section_id": link.output_section_id},
+        actor=principal.as_actor(),
+    )
+    return {
+        "id": str(link.id),
+        "confidence": link.confidence,
+        "confirmed": payload.confirmed,
     }
 
 

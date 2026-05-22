@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch, type Session } from "../auth";
+// apiFetch usato in mutations DraftViewer (provenance confirm/remove)
 import { DocumentsWorkspace } from "./DocumentsWorkspace";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
@@ -538,6 +539,7 @@ function DraftViewer({
   onSelectSource: (documentId: string, chunkId: string) => void;
 }) {
   const token = localStorage.getItem("notai.jwt");
+  const qc = useQueryClient();
 
   const sections = useQuery({
     queryKey: ["doc-sections", draft.document_id],
@@ -559,6 +561,26 @@ function DraftViewer({
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return (await r.json()) as { links_by_section: Record<string, ProvLink[]>; total_links: number };
     },
+  });
+
+  const confirmLink = useMutation({
+    mutationFn: ({ id, confirmed }: { id: string; confirmed: boolean }) =>
+      apiFetch(
+        `/v1/documents/provenance/${id}/confirm`,
+        { method: "PUT", body: JSON.stringify({ confirmed }) },
+        token ?? undefined,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["doc-provenance", draft.document_id] }),
+  });
+
+  const removeLink = useMutation({
+    mutationFn: (id: string) =>
+      apiFetch(
+        `/v1/documents/provenance/${id}`,
+        { method: "DELETE" },
+        token ?? undefined,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["doc-provenance", draft.document_id] }),
   });
 
   const rawContent = useQuery({
@@ -663,6 +685,44 @@ function DraftViewer({
                               title="Apri il chunk sorgente nel workspace"
                             >
                               ↗ apri fonte
+                            </button>
+                            <button
+                              onClick={() => confirmLink.mutate({ id: l.id, confirmed: true })}
+                              disabled={confirmLink.isPending || l.confidence === 1.0}
+                              style={{
+                                marginLeft: "0.3rem",
+                                padding: "0.1rem 0.4rem",
+                                fontSize: "0.7rem",
+                                background: l.confidence === 1.0 ? "#dcfce7" : "#16a34a",
+                                color: l.confidence === 1.0 ? "#166534" : "white",
+                                border: "none",
+                                borderRadius: 3,
+                                cursor: "pointer",
+                              }}
+                              title="Conferma che questo link e' corretto"
+                            >
+                              {l.confidence === 1.0 ? "✓ confermato" : "✓ conferma"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm("Rimuovere questo link? L'azione e' tracciata in audit.")) {
+                                  removeLink.mutate(l.id);
+                                }
+                              }}
+                              disabled={removeLink.isPending}
+                              style={{
+                                marginLeft: "0.3rem",
+                                padding: "0.1rem 0.4rem",
+                                fontSize: "0.7rem",
+                                background: "white",
+                                color: "#b91c1c",
+                                border: "1px solid #fca5a5",
+                                borderRadius: 3,
+                                cursor: "pointer",
+                              }}
+                              title="Rimuovi link errato"
+                            >
+                              ✗ rimuovi
                             </button>
                           </li>
                         ))}
