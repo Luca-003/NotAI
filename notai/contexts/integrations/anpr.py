@@ -16,6 +16,18 @@ class AnprAdapter(IntegrationAdapter):
     name = "anpr"
     backend = "mock"
 
+    @staticmethod
+    def summarize(payload: dict) -> str:
+        """One-liner umano del payload (per UI + audit)."""
+        if not payload:
+            return "nessun risultato"
+        nome = f"{payload.get('nome', '')} {payload.get('cognome', '')}".strip()
+        nascita = payload.get("luogo_nascita") or {}
+        return (
+            f"{nome}, nato/a a {nascita.get('comune', '?')} "
+            f"il {payload.get('data_nascita', '?')}"
+        )
+
     async def fetch_person_data(self, fiscal_code: str) -> dict:
         fc = (fiscal_code or "").upper().strip()
         if not _CF_RE.match(fc):

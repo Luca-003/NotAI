@@ -332,10 +332,8 @@ async def ingest_document(document_id: uuid.UUID, tenant_id: uuid.UUID) -> dict:
         indexed=sum(1 for f in indexed_flags if f),
     )
 
-    # Classificazione LLM (blocco 3 della visione workspace).
-    # Errori NON bloccano l'ingestion (e' un valore aggiunto, non critico).
-    # Import locale per evitare ciclo (classification importa rag che importa
-    # gateway che e' indipendente, ma teniamo il confine pulito).
+    # Errori della classificazione non bloccano l'ingestion (valore aggiunto, non critico).
+    # Import locale: classification importa rag/gateway, lasciamo il confine pulito.
     try:
         from notai.contexts.documents.classification import classify_document_chunks
 

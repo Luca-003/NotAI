@@ -10,6 +10,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import delete, select
 
+from apps.api.bg import background_safe
 from apps.api.deps import DbDep, TenantDep, get_or_404
 from notai.contexts.audit.logger import audit_logger
 from notai.contexts.audit.streams import stream_for_act, stream_for_practice, stream_for_provenance
@@ -71,15 +72,10 @@ class ChunkRead(BaseModel):
     classified_at: datetime | None
 
 
+@background_safe("notai.ingest.background")
 async def _run_ingestion_safely(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
     """Wrapper sicuro per BackgroundTasks: cattura errori per non far crashare il worker."""
-    import structlog
-
-    log = structlog.get_logger(__name__)
-    try:
-        await ingest_document(document_id, tenant_id)
-    except Exception as e:  # noqa: BLE001
-        log.exception("notai.ingest.background_failed", document_id=str(document_id), error=str(e))
+    await ingest_document(document_id, tenant_id)
 
 
 async def _load_doc(session, doc_id: uuid.UUID) -> Document:

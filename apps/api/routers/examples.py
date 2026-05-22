@@ -20,8 +20,10 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from notai.contexts.audit.streams import stream_for_act_example
+from notai.shared.db.soft_delete import not_deleted
 from notai.shared.domain.identifiers import as_uuid_or_none
 
+from apps.api.bg import background_safe
 from apps.api.deps import DbDep, TenantDep
 from notai.contexts.audit.logger import audit_logger
 from notai.contexts.drafting.examples import (
@@ -59,13 +61,9 @@ class ActExampleDetail(ActExampleRead):
     sections: list | None
 
 
+@background_safe("notai.examples.index_background")
 async def _index_safely(example_id: uuid.UUID, tenant_id: uuid.UUID | None) -> None:
-    import structlog
-    log = structlog.get_logger(__name__)
-    try:
-        await index_example_in_qdrant(example_id, tenant_id)
-    except Exception as e:  # noqa: BLE001
-        log.exception("notai.examples.index_background_failed", example_id=str(example_id), error=str(e))
+    await index_example_in_qdrant(example_id, tenant_id)
 
 
 @router.post("", response_model=ActExampleRead, status_code=status.HTTP_201_CREATED)
@@ -174,7 +172,7 @@ async def list_examples(
     from sqlalchemy import cast
     from sqlalchemy.dialects.postgresql import JSONB
 
-    stmt = select(ActExample).where(ActExample.deleted_at.is_(None))
+    stmt = select(ActExample).where(not_deleted(ActExample))
     if template_id:
         stmt = stmt.where(ActExample.template_id == template_id)
     if tag:

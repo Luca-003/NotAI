@@ -63,23 +63,6 @@ async def _audit(
         )
 
 
-def _summarize_telemaco(payload: dict) -> str:
-    if not payload:
-        return "nessun risultato"
-    den = payload.get("denominazione", "?")
-    sede = payload.get("sede_legale") or {}
-    citta = sede.get("comune", "?")
-    return f"{den} (sede {citta})"
-
-
-def _summarize_anpr(payload: dict) -> str:
-    if not payload:
-        return "nessun risultato"
-    nome = f"{payload.get('nome', '')} {payload.get('cognome', '')}".strip()
-    nascita = payload.get("luogo_nascita") or {}
-    return f"{nome}, nato/a a {nascita.get('comune', '?')} il {payload.get('data_nascita', '?')}"
-
-
 @activity.defn(name="visura.telemaco")
 async def visura_telemaco(req: VisuraRequest) -> VisuraResult:
     """Visura camerale tramite InfoCamere/Telemaco. Mock in Fase 2."""
@@ -89,7 +72,7 @@ async def visura_telemaco(req: VisuraRequest) -> VisuraResult:
         vat_or_fiscal=req.party_vat or req.party_fiscal_code or "",
     )
     h = _hash_payload(payload)
-    payload["_summary"] = _summarize_telemaco(payload)
+    payload["_summary"] = TelemacoAdapter.summarize(payload)
     result = VisuraResult(
         source="telemaco",
         found=bool(payload),
@@ -118,7 +101,7 @@ async def visura_anpr(req: VisuraRequest) -> VisuraResult:
     adapter = AnprAdapter()
     payload = await adapter.fetch_person_data(fiscal_code=req.party_fiscal_code or "")
     h = _hash_payload(payload)
-    payload["_summary"] = _summarize_anpr(payload)
+    payload["_summary"] = AnprAdapter.summarize(payload)
     result = VisuraResult(
         source="anpr",
         found=bool(payload),
@@ -200,6 +183,7 @@ async def draft_generate(req: DraftRequest) -> DraftResult:
         ProvenanceLink,
     )
     from notai.contexts.documents.storage import put_text
+    from notai.shared.db.soft_delete import not_deleted
 
     activity.heartbeat("rendering draft")
     sections = _build_act_sections(req.template_id, req.slots)
@@ -229,7 +213,7 @@ async def draft_generate(req: DraftRequest) -> DraftResult:
                 .where(
                     Document.act_id == act_uuid,
                     Document.kind == INPUT_SOURCE,
-                    Document.deleted_at.is_(None),
+                    not_deleted(Document),
                 )
             )
         ).all()

@@ -6,26 +6,21 @@ import uuid
 from typing import Sequence
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+
+from notai.shared.db.soft_delete import SoftDeleteRepository, not_deleted
 
 from .models import Act
 
 
-class ActRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
+class ActRepository(SoftDeleteRepository[Act]):
+    """CRUD su Act. Eredita get() da SoftDeleteRepository."""
 
-    async def get(self, act_id: uuid.UUID) -> Act | None:
-        return (
-            await self.session.execute(
-                select(Act).where(Act.id == act_id, Act.deleted_at.is_(None))
-            )
-        ).scalar_one_or_none()
+    model = Act
 
     async def list_by_practice(self, practice_id: uuid.UUID) -> Sequence[Act]:
         rows = await self.session.execute(
             select(Act)
-            .where(Act.practice_id == practice_id, Act.deleted_at.is_(None))
+            .where(Act.practice_id == practice_id, not_deleted(Act))
             .order_by(Act.created_at.desc())
         )
         return rows.scalars().all()

@@ -14,6 +14,15 @@ class TelemacoAdapter(IntegrationAdapter):
     name = "telemaco"
     backend = "mock"
 
+    @staticmethod
+    def summarize(payload: dict) -> str:
+        """One-liner umano del payload (per UI + audit)."""
+        if not payload:
+            return "nessun risultato"
+        den = payload.get("denominazione", "?")
+        sede = payload.get("sede_legale") or {}
+        return f"{den} (sede {sede.get('comune', '?')})"
+
     async def fetch_company_data(self, vat_or_fiscal: str) -> dict:
         """Visura camerale per una persona giuridica.
 

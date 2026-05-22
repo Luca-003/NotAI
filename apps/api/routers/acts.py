@@ -18,6 +18,7 @@ from notai.contexts.audit.streams import stream_for_act
 from notai.contexts.documents.kinds import INPUT_SOURCE
 from notai.contexts.documents.models import Document
 from notai.contexts.practices.acts_repository import ActRepository
+from notai.shared.db.soft_delete import not_deleted
 from notai.contexts.workflow.client import get_temporal_client
 from notai.contexts.workflow.common import (
     HumanReviewDecision,
@@ -263,7 +264,7 @@ async def list_documents_of_act(
         raise HTTPException(status_code=404, detail="act not found")
     rows = await session.execute(
         select(Document)
-        .where(Document.act_id == act_id, Document.deleted_at.is_(None))
+        .where(Document.act_id == act_id, not_deleted(Document))
         .order_by(Document.created_at.asc())
     )
     return [DocumentRead.model_validate(d) for d in rows.scalars().all()]
@@ -298,7 +299,7 @@ async def _search_input_chunks(
         .where(
             Document.act_id == act_id,
             Document.kind == INPUT_SOURCE,
-            Document.deleted_at.is_(None),
+            not_deleted(Document),
             or_(
                 DocumentChunk.text.ilike(pattern),
                 DocumentChunk.classification.cast(sa.String).ilike(pattern),
@@ -329,7 +330,7 @@ async def _search_output_sections(
             select(Document).where(
                 Document.act_id == act_id,
                 Document.kind != INPUT_SOURCE,
-                Document.deleted_at.is_(None),
+                not_deleted(Document),
                 Document.sections.is_not(None),
             )
         )

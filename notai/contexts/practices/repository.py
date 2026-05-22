@@ -5,36 +5,21 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from notai.shared.db.soft_delete import SoftDeleteRepository
 
 from .models import Practice
 
 
-class PracticeRepository:
-    """CRUD su Practice. Tutte le query passano per RLS (SET LOCAL app.tenant_id)."""
+class PracticeRepository(SoftDeleteRepository[Practice]):
+    """CRUD su Practice. Tutte le query passano per RLS (SET LOCAL app.tenant_id).
 
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
+    Eredita get() e list_all() da SoftDeleteRepository; aggiunge create().
+    """
 
-    async def get(self, practice_id: uuid.UUID) -> Practice | None:
-        return (
-            await self.session.execute(
-                select(Practice).where(
-                    Practice.id == practice_id, Practice.deleted_at.is_(None)
-                )
-            )
-        ).scalar_one_or_none()
+    model = Practice
 
     async def list(self, *, limit: int = 50, offset: int = 0) -> Sequence[Practice]:
-        rows = await self.session.execute(
-            select(Practice)
-            .where(Practice.deleted_at.is_(None))
-            .order_by(Practice.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-        return rows.scalars().all()
+        return await self.list_all(limit=limit, offset=offset)
 
     async def create(
         self,

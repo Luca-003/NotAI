@@ -4,6 +4,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../auth";
+import { truncate } from "../text";
 
 type LineageNode = {
   input_documents: { id: string; filename: string; kind: string }[];
@@ -287,7 +288,3 @@ export function LineageGraph({
   );
 }
 
-function truncate(s: string, n: number): string {
-  if (!s) return "";
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
-}

@@ -9,6 +9,8 @@ import {
   type ReverseProvenanceItem,
 } from "./hooks/useProvenance";
 import { card } from "../theme";
+import { KIND_INPUT_SOURCE, isInputKind } from "./kinds";
+import { truncate } from "../text";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
@@ -118,7 +120,7 @@ export function DocumentsWorkspace({
       for (const f of Array.from(files)) {
         const fd = new FormData();
         fd.append("file", f);
-        fd.append("kind", "input_source");
+        fd.append("kind", KIND_INPUT_SOURCE);
         fd.append("act_id", actId);
         const r = await fetch(`${API_BASE}/v1/documents`, {
           method: "POST",
@@ -148,8 +150,8 @@ export function DocumentsWorkspace({
     if (e.dataTransfer.files.length > 0) upload.mutate(e.dataTransfer.files);
   };
 
-  const inputDocs = (docs.data ?? []).filter((d) => d.kind === "input_source" || d.kind === "allegato");
-  const outputDocs = (docs.data ?? []).filter((d) => !["input_source", "allegato"].includes(d.kind));
+  const inputDocs = (docs.data ?? []).filter((d) => isInputKind(d.kind));
+  const outputDocs = (docs.data ?? []).filter((d) => !isInputKind(d.kind));
 
   return (
     <section style={styles.card}>
@@ -525,7 +527,7 @@ function DocumentClassificationStrip({
       )}
       {d.entities.slice(0, 3).map((e, i) => (
         <span key={i} style={styles.classBadge} title={e.type}>
-          {e.value.length > 28 ? e.value.slice(0, 26) + "…" : e.value}
+          {truncate(e.value, 28)}
         </span>
       ))}
       {d.entities.length > 3 && (

@@ -22,6 +22,7 @@ from qdrant_client.http import models as qm
 from sqlalchemy import or_, select
 
 from notai.contexts.drafting.examples_models import ActExample
+from notai.shared.db.soft_delete import not_deleted
 from notai.shared.tenancy.session import scoped_session
 
 logger = structlog.get_logger(__name__)
@@ -190,7 +191,7 @@ async def search_examples(
     pattern = f"%{query.strip().lower()}%"
     async with scoped_session(tenant_id) as session:
         stmt = select(ActExample).where(
-            ActExample.deleted_at.is_(None),
+            not_deleted(ActExample),
             or_(
                 ActExample.title.ilike(pattern),
                 ActExample.full_text.ilike(pattern),
