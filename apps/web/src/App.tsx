@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { DevBootstrap } from "./components/DevBootstrap";
 import { LLMModelPicker } from "./components/LLMModelPicker";
 import { GuidePage } from "./guide/GuidePage";
 import { ModulesPage } from "./modules/ModulesPage";
@@ -124,6 +125,8 @@ function Dashboard() {
           </div>
         )}
       </section>
+
+      <DevBootstrap />
 
       <LLMModelPicker />
     </div>

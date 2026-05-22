@@ -6,6 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { DevBootstrap } from "../components/DevBootstrap";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
@@ -92,9 +93,13 @@ export function ModulesPage() {
       </section>
 
       {!token && (
-        <div style={styles.hint}>
-          Per usare questa pagina serve un JWT. In dev: <code>POST /api/v1/dev/bootstrap</code>.
-        </div>
+        <>
+          <div style={styles.hint}>
+            Per usare questa pagina serve un JWT. Crealo qui sotto (solo dev) o
+            incolla un token gia' esistente nel campo qui sopra.
+          </div>
+          <DevBootstrap onToken={(t) => setToken(t)} />
+        </>
       )}
 
       {modules.isError && (
