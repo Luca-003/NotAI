@@ -1,7 +1,7 @@
 // Workspace documenti per un atto: upload (drag-drop + picker), lista, preview.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiFetch, type Session } from "../auth";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
@@ -66,14 +66,29 @@ type DocumentClassificationSummary = {
 export function DocumentsWorkspace({
   session,
   actId,
+  selectedSource,
+  onClearSelection,
 }: {
   session: Session;
   actId: string;
+  selectedSource?: { documentId: string; chunkId: string } | null;
+  onClearSelection?: () => void;
 }) {
   const qc = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [highlightChunkId, setHighlightChunkId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Quando arriva una selectedSource dal DraftViewer, apri il documento sorgente
+  // e segna il chunk da evidenziare.
+  useEffect(() => {
+    if (selectedSource) {
+      setSelectedId(selectedSource.documentId);
+      setHighlightChunkId(selectedSource.chunkId);
+    }
+  }, [selectedSource]);
 
   const docs = useQuery({
     queryKey: ["docs", actId],
@@ -137,6 +152,8 @@ export function DocumentsWorkspace({
         la tracciabilita&#769; (output &harr; sorgente di input).
       </p>
 
+      <ActSearchBar actId={actId} session={session} onJumpToChunk={(docId, chunkId) => { setSelectedId(docId); setHighlightChunkId(chunkId); }} query={searchQuery} setQuery={setSearchQuery} />
+
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -193,7 +210,12 @@ export function DocumentsWorkspace({
         <DocumentPreview
           documentId={selectedId}
           session={session}
-          onClose={() => setSelectedId(null)}
+          highlightChunkId={highlightChunkId}
+          onClose={() => {
+            setSelectedId(null);
+            setHighlightChunkId(null);
+            onClearSelection?.();
+          }}
         />
       )}
     </section>
@@ -268,6 +290,191 @@ function DocumentList({
     </div>
   );
 }
+
+function ActSearchBar({
+  actId,
+  session,
+  onJumpToChunk,
+  query,
+  setQuery,
+}: {
+  actId: string;
+  session: Session;
+  onJumpToChunk: (documentId: string, chunkId: string) => void;
+  query: string;
+  setQuery: (q: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const trimmed = query.trim();
+  const results = useQuery({
+    queryKey: ["act-search", actId, trimmed],
+    queryFn: () =>
+      apiFetch<{
+        input_hits: {
+          chunk_id: string;
+          document_id: string;
+          filename: string;
+          ordering: number;
+          page_number: number | null;
+          document_type: string | null;
+          snippet: string;
+        }[];
+        output_hits: {
+          document_id: string;
+          filename: string;
+          section_id: string;
+          section_title: string;
+          snippet: string;
+        }[];
+        total: number;
+      }>(`/v1/acts/${actId}/search?q=${encodeURIComponent(trimmed)}`, {}, session.token),
+    enabled: trimmed.length >= 2,
+    staleTime: 5_000,
+  });
+
+  return (
+    <div style={{ marginBottom: "1rem", position: "relative" }}>
+      <input
+        type="search"
+        placeholder="Cerca nel fascicolo (nome, indirizzo, foglio catastale, norma...)"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        style={{
+          width: "100%",
+          padding: "0.55rem 0.8rem",
+          fontSize: "0.92rem",
+          border: "1px solid #cbd5e1",
+          borderRadius: 4,
+        }}
+      />
+      {open && trimmed.length >= 2 && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            right: 0,
+            background: "white",
+            border: "1px solid #cbd5e1",
+            borderTop: "none",
+            borderRadius: "0 0 4px 4px",
+            maxHeight: 380,
+            overflowY: "auto",
+            zIndex: 5,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+          }}
+        >
+          {results.isLoading && <div style={{ padding: "0.6rem" }}>Cerco...</div>}
+          {results.isError && (
+            <div style={{ padding: "0.6rem", color: "#7f1d1d" }}>
+              Errore: {String(results.error)}
+            </div>
+          )}
+          {results.data && (
+            <>
+              {results.data.total === 0 && (
+                <div style={{ padding: "0.8rem", color: "#94a3b8", fontSize: "0.88rem" }}>
+                  Nessun risultato per "{trimmed}"
+                </div>
+              )}
+              {results.data.input_hits.length > 0 && (
+                <div>
+                  <div style={searchCategory}>📥 Input ({results.data.input_hits.length})</div>
+                  {results.data.input_hits.map((h) => (
+                    <button
+                      key={h.chunk_id}
+                      onClick={() => {
+                        onJumpToChunk(h.document_id, h.chunk_id);
+                        setOpen(false);
+                      }}
+                      style={searchHit}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem" }}>
+                        <strong style={{ fontSize: "0.85rem" }}>{h.filename}</strong>
+                        {h.document_type && (
+                          <code style={{ fontSize: "0.7rem", background: "#dbeafe", color: "#1e3a8a", padding: "0.05rem 0.4rem", borderRadius: 2 }}>
+                            {h.document_type.replace(/_/g, " ")}
+                          </code>
+                        )}
+                      </div>
+                      <div style={{ color: "#64748b", fontSize: "0.78rem", marginTop: "0.2rem" }}>
+                        chunk #{h.ordering}{h.page_number != null && ` · pag. ${h.page_number}`}
+                      </div>
+                      <div style={searchSnippet}>{h.snippet}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {results.data.output_hits.length > 0 && (
+                <div>
+                  <div style={searchCategory}>📤 Output ({results.data.output_hits.length})</div>
+                  {results.data.output_hits.map((h) => (
+                    <div key={`${h.document_id}-${h.section_id}`} style={{ ...searchHit, cursor: "default" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem" }}>
+                        <strong style={{ fontSize: "0.85rem" }}>{h.section_title}</strong>
+                        <span style={{ fontSize: "0.7rem", color: "#94a3b8" }}>{h.filename}</span>
+                      </div>
+                      <div style={searchSnippet}>{h.snippet}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          <button
+            onClick={() => setOpen(false)}
+            style={{
+              width: "100%",
+              padding: "0.4rem",
+              background: "#f1f5f9",
+              border: "none",
+              borderTop: "1px solid #e2e8f0",
+              cursor: "pointer",
+              fontSize: "0.78rem",
+              color: "#475569",
+            }}
+          >
+            Chiudi
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const searchCategory: React.CSSProperties = {
+  padding: "0.4rem 0.75rem",
+  background: "#f8fafc",
+  fontSize: "0.78rem",
+  fontWeight: 600,
+  color: "#475569",
+  borderBottom: "1px solid #e2e8f0",
+};
+
+const searchHit: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  textAlign: "left",
+  padding: "0.6rem 0.75rem",
+  background: "transparent",
+  border: "none",
+  borderBottom: "1px solid #f1f5f9",
+  cursor: "pointer",
+  fontSize: "0.85rem",
+};
+
+const searchSnippet: React.CSSProperties = {
+  fontSize: "0.78rem",
+  color: "#334155",
+  marginTop: "0.3rem",
+  fontStyle: "italic",
+  lineHeight: 1.4,
+};
+
 
 function DocumentClassificationStrip({
   documentId,
@@ -355,10 +562,12 @@ function IngestionBadge({ doc }: { doc: Doc }) {
 function DocumentPreview({
   documentId,
   session,
+  highlightChunkId,
   onClose,
 }: {
   documentId: string;
   session: Session;
+  highlightChunkId?: string | null;
   onClose: () => void;
 }) {
   const url = `${API_BASE}/v1/documents/${documentId}/content`;
@@ -404,24 +613,44 @@ function DocumentPreview({
             </div>
           )}
 
-          <ChunksList documentId={documentId} session={session} />
+          <ChunksList
+            documentId={documentId}
+            session={session}
+            highlightChunkId={highlightChunkId ?? null}
+          />
         </div>
       )}
     </div>
   );
 }
 
-function ChunksList({ documentId, session }: { documentId: string; session: Session }) {
+function ChunksList({
+  documentId,
+  session,
+  highlightChunkId,
+}: {
+  documentId: string;
+  session: Session;
+  highlightChunkId: string | null;
+}) {
   const chunks = useQuery({
     queryKey: ["chunks", documentId],
     queryFn: () =>
       apiFetch<Chunk[]>(`/v1/documents/${documentId}/chunks`, {}, session.token),
     refetchInterval: (q) => {
       const data = q.state.data as Chunk[] | undefined;
-      // Refresh ogni 2s finche' la lista e' vuota (ingestion potrebbe essere in corso)
       return !data || data.length === 0 ? 2_000 : false;
     },
   });
+
+  // Auto-scroll al chunk evidenziato
+  useEffect(() => {
+    if (!highlightChunkId) return;
+    const el = document.getElementById(`chunk-${highlightChunkId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [highlightChunkId, chunks.data]);
 
   if (chunks.isLoading) return <div style={{ padding: "0.75rem" }}>Cerco chunks…</div>;
   if (chunks.isError) return <div style={styles.error}>{String(chunks.error)}</div>;
@@ -441,7 +670,18 @@ function ChunksList({ documentId, session }: { documentId: string; session: Sess
       </summary>
       <ol style={{ paddingLeft: "1.5rem", marginTop: "0.5rem" }}>
         {chunks.data.map((c) => (
-          <li key={c.id} style={{ marginBottom: "0.75rem" }}>
+          <li
+            key={c.id}
+            id={`chunk-${c.id}`}
+            style={{
+              marginBottom: "0.75rem",
+              background: highlightChunkId === c.id ? "#fef9c3" : "transparent",
+              border: highlightChunkId === c.id ? "2px solid #facc15" : "none",
+              padding: highlightChunkId === c.id ? "0.6rem" : 0,
+              borderRadius: 4,
+              transition: "background 200ms",
+            }}
+          >
             <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginBottom: "0.2rem" }}>
               chunk #{c.ordering}
               {c.page_number != null && ` · pag. ${c.page_number}`}

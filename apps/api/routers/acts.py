@@ -265,3 +265,118 @@ async def list_documents_of_act(
         .order_by(Document.created_at.asc())
     )
     return [DocumentRead.model_validate(d) for d in rows.scalars().all()]
+
+
+@router.get("/{act_id}/search")
+async def search_in_act(
+    act_id: uuid.UUID,
+    principal: TenantDep,
+    session: DbDep,
+    q: str,
+    limit: int = 20,
+) -> dict:
+    """Ricerca testuale (case-insensitive) su input chunks + output sections.
+
+    In Fase 5 ILIKE su Postgres; in fasi successive aggiungeremo dense retrieval
+    via Qdrant + BM25 via OpenSearch.
+    """
+    del principal
+    import sqlalchemy as sa
+    from sqlalchemy import or_
+
+    from notai.contexts.documents.models import DocumentChunk
+
+    if (await ActRepository(session).get(act_id)) is None:
+        raise HTTPException(status_code=404, detail="act not found")
+    needle = (q or "").strip()
+    if len(needle) < 2:
+        return {"query": q, "input_hits": [], "output_hits": [], "total": 0}
+
+    pattern = f"%{needle.lower()}%"
+    lower_needle = needle.lower()
+
+    rows = await session.execute(
+        select(DocumentChunk, Document)
+        .join(Document, DocumentChunk.document_id == Document.id)
+        .where(
+            Document.act_id == act_id,
+            Document.kind == "input_source",
+            Document.deleted_at.is_(None),
+            or_(
+                DocumentChunk.text.ilike(pattern),
+                DocumentChunk.classification.cast(sa.String).ilike(pattern),
+            ),
+        )
+        .limit(limit)
+    )
+    input_hits: list[dict] = []
+    for chunk, doc in rows.all():
+        text = chunk.text
+        idx = text.lower().find(lower_needle)
+        if idx < 0:
+            snippet = text[:160] + ("…" if len(text) > 160 else "")
+        else:
+            start = max(0, idx - 60)
+            end = min(len(text), idx + len(needle) + 100)
+            snippet = (
+                ("…" if start > 0 else "")
+                + text[start:end]
+                + ("…" if end < len(text) else "")
+            )
+        input_hits.append({
+            "kind": "input_chunk",
+            "chunk_id": str(chunk.id),
+            "document_id": str(chunk.document_id),
+            "filename": doc.filename,
+            "ordering": chunk.ordering,
+            "page_number": chunk.page_number,
+            "document_type": (chunk.classification or {}).get("document_type"),
+            "snippet": snippet,
+        })
+
+    docs = (
+        await session.execute(
+            select(Document).where(
+                Document.act_id == act_id,
+                Document.kind != "input_source",
+                Document.deleted_at.is_(None),
+                Document.sections.is_not(None),
+            )
+        )
+    ).scalars().all()
+
+    output_hits: list[dict] = []
+    for d in docs:
+        for section in d.sections or []:
+            text = section.get("text") or ""
+            title = section.get("title") or ""
+            haystack = (text + " " + title).lower()
+            if lower_needle in haystack:
+                idx = text.lower().find(lower_needle)
+                if idx >= 0:
+                    start = max(0, idx - 60)
+                    end = min(len(text), idx + len(needle) + 100)
+                    snippet = (
+                        ("…" if start > 0 else "")
+                        + text[start:end]
+                        + ("…" if end < len(text) else "")
+                    )
+                else:
+                    snippet = text[:160] + ("…" if len(text) > 160 else "")
+                output_hits.append({
+                    "kind": "output_section",
+                    "document_id": str(d.id),
+                    "filename": d.filename,
+                    "section_id": section.get("id"),
+                    "section_title": section.get("title"),
+                    "snippet": snippet,
+                })
+                if len(output_hits) >= limit:
+                    break
+
+    return {
+        "query": q,
+        "input_hits": input_hits,
+        "output_hits": output_hits,
+        "total": len(input_hits) + len(output_hits),
+    }

@@ -73,6 +73,12 @@ export function ActDetail({
 }) {
   const qc = useQueryClient();
   const [showStart, setShowStart] = useState(false);
+  // Stato condiviso per traceability: chunk evidenziato (selezionato dalle source
+  // del DraftViewer) -> DocumentsWorkspace lo apre + scrolla.
+  const [selectedSource, setSelectedSource] = useState<{
+    documentId: string;
+    chunkId: string;
+  } | null>(null);
 
   const act = useQuery({
     queryKey: ["act", actId],
@@ -121,7 +127,12 @@ export function ActDetail({
             </div>
           </header>
 
-          <DocumentsWorkspace session={session} actId={actId} />
+          <DocumentsWorkspace
+            session={session}
+            actId={actId}
+            selectedSource={selectedSource}
+            onClearSelection={() => setSelectedSource(null)}
+          />
 
           {!act.data.workflow_run_id && !showStart && (
             <section style={card}>
@@ -150,7 +161,15 @@ export function ActDetail({
           )}
 
           {act.data.workflow_run_id && wfStatus.data && (
-            <WorkflowView state={wfStatus.data.state} statusTemporal={wfStatus.data.status_temporal} onReview={review.mutate} reviewPending={review.isPending} />
+            <WorkflowView
+              state={wfStatus.data.state}
+              statusTemporal={wfStatus.data.status_temporal}
+              onReview={review.mutate}
+              reviewPending={review.isPending}
+              onSelectSource={(documentId, chunkId) =>
+                setSelectedSource({ documentId, chunkId })
+              }
+            />
           )}
         </>
       )}
@@ -277,11 +296,13 @@ function WorkflowView({
   statusTemporal,
   onReview,
   reviewPending,
+  onSelectSource,
 }: {
   state: WorkflowState;
   statusTemporal: string | null;
   onReview: (decision: "approved" | "rejected" | "changed") => void;
   reviewPending: boolean;
+  onSelectSource: (documentId: string, chunkId: string) => void;
 }) {
   return (
     <>
@@ -299,7 +320,7 @@ function WorkflowView({
 
       {state.visure.length > 0 && <VisureSection visure={state.visure} />}
 
-      {state.draft && <DraftViewer draft={state.draft} />}
+      {state.draft && <DraftViewer draft={state.draft} onSelectSource={onSelectSource} />}
 
       {state.tax && (
         <section style={card}>
@@ -463,8 +484,10 @@ type ProvLink = {
 
 function DraftViewer({
   draft,
+  onSelectSource,
 }: {
   draft: { document_id: string; sha256: string; storage_uri: string };
+  onSelectSource: (documentId: string, chunkId: string) => void;
 }) {
   const token = localStorage.getItem("notai.jwt");
 
@@ -574,7 +597,25 @@ function DraftViewer({
                             {l.rationale ?? ""}{" "}
                             <span style={{ color: "#94a3b8" }}>
                               (conf {(l.confidence * 100).toFixed(0)}%)
-                            </span>
+                            </span>{" "}
+                            <button
+                              onClick={() =>
+                                onSelectSource(l.source_document_id, l.source_chunk_id)
+                              }
+                              style={{
+                                marginLeft: "0.4rem",
+                                padding: "0.1rem 0.4rem",
+                                fontSize: "0.7rem",
+                                background: "#1e293b",
+                                color: "white",
+                                border: "none",
+                                borderRadius: 3,
+                                cursor: "pointer",
+                              }}
+                              title="Apri il chunk sorgente nel workspace"
+                            >
+                              ↗ apri fonte
+                            </button>
                           </li>
                         ))}
                       </ul>
