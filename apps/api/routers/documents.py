@@ -373,6 +373,95 @@ async def get_document_provenance(
     }
 
 
+@router.get("/{document_id}/lineage")
+async def get_document_lineage_graph(
+    document_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> dict:
+    """Restituisce il grafo di lineage completo per un documento di output.
+
+    Output: nodi (input documents + chunks + output sections) e archi
+    (chunk -> section). Il frontend usa questi dati per disegnare un SVG.
+    """
+    del principal
+    out_doc = await _load_doc(session, document_id)
+
+    links_rows = await session.execute(
+        select(ProvenanceLink).where(
+            ProvenanceLink.output_document_id == document_id,
+            ProvenanceLink.confidence > 0,
+        )
+    )
+    links = list(links_rows.scalars().all())
+
+    source_chunk_ids = {link.source_chunk_id for link in links}
+    chunks_by_id: dict[uuid.UUID, DocumentChunk] = {}
+    input_doc_ids: set[uuid.UUID] = set()
+    if source_chunk_ids:
+        chunk_rows = await session.execute(
+            select(DocumentChunk).where(DocumentChunk.id.in_(source_chunk_ids))
+        )
+        for c in chunk_rows.scalars().all():
+            chunks_by_id[c.id] = c
+            input_doc_ids.add(c.document_id)
+
+    input_docs: list[dict] = []
+    if input_doc_ids:
+        doc_rows = await session.execute(
+            select(Document).where(Document.id.in_(input_doc_ids))
+        )
+        for d in doc_rows.scalars().all():
+            input_docs.append({
+                "id": str(d.id),
+                "filename": d.filename,
+                "kind": d.kind,
+            })
+
+    chunks_payload = [
+        {
+            "id": str(c.id),
+            "document_id": str(c.document_id),
+            "ordering": c.ordering,
+            "page_number": c.page_number,
+            "preview": (c.text or "")[:120],
+            "entity_type": (c.classification or {}).get("entity_type"),
+            "document_type": (c.classification or {}).get("document_type"),
+        }
+        for c in chunks_by_id.values()
+    ]
+
+    sections_payload = [
+        {
+            "id": (s.get("id") or ""),
+            "title": (s.get("title") or ""),
+        }
+        for s in (out_doc.sections or [])
+    ]
+    referenced_section_ids = {link.output_section_id for link in links}
+    sections_payload = [
+        s for s in sections_payload if s["id"] in referenced_section_ids
+    ] or sections_payload
+
+    edges = [
+        {
+            "id": str(link.id),
+            "source_chunk_id": str(link.source_chunk_id),
+            "output_section_id": link.output_section_id,
+            "relation": link.relation,
+            "confidence": link.confidence,
+            "rationale": link.rationale,
+        }
+        for link in links
+    ]
+
+    return {
+        "document_id": str(document_id),
+        "input_documents": input_docs,
+        "chunks": chunks_payload,
+        "output_sections": sections_payload,
+        "edges": edges,
+    }
+
+
 @router.get("/chunks/{chunk_id}/reverse-provenance")
 async def get_chunk_reverse_provenance(
     chunk_id: uuid.UUID, principal: TenantDep, session: DbDep

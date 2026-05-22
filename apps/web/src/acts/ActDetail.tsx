@@ -5,6 +5,7 @@ import { useState } from "react";
 import { apiFetch, type Session } from "../auth";
 // apiFetch usato in mutations DraftViewer (provenance confirm/remove)
 import { DocumentsWorkspace } from "./DocumentsWorkspace";
+import { LineageGraph } from "./LineageGraph";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 import { s } from "../practices/PracticesPage";
@@ -540,6 +541,7 @@ function DraftViewer({
 }) {
   const token = localStorage.getItem("notai.jwt");
   const qc = useQueryClient();
+  const [showLineage, setShowLineage] = useState(false);
 
   const sections = useQuery({
     queryKey: ["doc-sections", draft.document_id],
@@ -611,10 +613,25 @@ function DraftViewer({
     <section style={card}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
         <h3 style={{ margin: 0 }}>Documento atto (bozza)</h3>
-        <button onClick={download} disabled={!rawContent.data} style={s.primaryBtn}>
-          ⬇ Scarica .md
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button onClick={() => setShowLineage((v) => !v)} style={s.secondaryBtn}>
+            {showLineage ? "▼ nascondi lineage" : "▶ vedi lineage grafico"}
+          </button>
+          <button onClick={download} disabled={!rawContent.data} style={s.primaryBtn}>
+            ⬇ Scarica .md
+          </button>
+        </div>
       </div>
+
+      {showLineage && (
+        <div style={{ marginBottom: "0.75rem" }}>
+          <LineageGraph
+            documentId={draft.document_id}
+            token={token}
+            onSelectChunk={(docId, chunkId) => onSelectSource(docId, chunkId)}
+          />
+        </div>
+      )}
       <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: "0.75rem" }}>
         <code>{draft.document_id}</code> · sha256 <code>{draft.sha256.slice(0, 16)}…</code>
         {provenance.data && (
