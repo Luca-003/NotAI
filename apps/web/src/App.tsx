@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { DevBootstrap } from "./components/DevBootstrap";
+import { useSession } from "./auth";
 import { LLMModelPicker } from "./components/LLMModelPicker";
 import { GuidePage } from "./guide/GuidePage";
 import { ModulesPage } from "./modules/ModulesPage";
@@ -11,6 +11,7 @@ type Tab = "dashboard" | "guide" | "modules";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("dashboard");
+  const { session, loading, error, login, logout } = useSession();
 
   return (
     <div style={layout.app}>
@@ -19,6 +20,7 @@ export function App() {
           <strong>NotAI</strong>
           <span style={layout.brandSub}>automazione studi notarili e legali</span>
         </div>
+
         <nav style={layout.nav}>
           <NavButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
             Dashboard
@@ -30,11 +32,28 @@ export function App() {
             Guida
           </NavButton>
         </nav>
+
+        <div style={layout.session}>
+          {session ? (
+            <>
+              <span style={layout.sessionInfo}>
+                Studio Demo · <code style={layout.tenantId}>{session.tenantId.slice(0, 8)}…</code>
+              </span>
+              <button onClick={logout} style={layout.logoutBtn}>Esci</button>
+            </>
+          ) : (
+            <button onClick={login} disabled={loading} style={layout.loginBtn}>
+              {loading ? "Accesso..." : "Accedi (dev)"}
+            </button>
+          )}
+        </div>
       </header>
+
+      {error && <div style={layout.errorBar}>Errore login: {error}</div>}
 
       <main style={layout.main}>
         {tab === "dashboard" && <Dashboard />}
-        {tab === "modules" && <ModulesPage />}
+        {tab === "modules" && <ModulesPage session={session} onNeedLogin={login} />}
         {tab === "guide" && <GuidePage />}
       </main>
 
@@ -68,7 +87,7 @@ function NavButton({
 }
 
 // ---------------------------------------------------------------------------
-// Dashboard (originale: stato sistema + model picker)
+// Dashboard
 // ---------------------------------------------------------------------------
 
 type Health = { status: string };
@@ -126,8 +145,6 @@ function Dashboard() {
         )}
       </section>
 
-      <DevBootstrap />
-
       <LLMModelPicker />
     </div>
   );
@@ -161,10 +178,11 @@ const layout = {
     position: "sticky",
     top: 0,
     zIndex: 10,
+    gap: "1rem",
   } as React.CSSProperties,
   brand: { display: "flex", alignItems: "baseline", gap: "0.75rem" } as React.CSSProperties,
   brandSub: { color: "#64748b", fontSize: "0.85rem" } as React.CSSProperties,
-  nav: { display: "flex", gap: "0.5rem" } as React.CSSProperties,
+  nav: { display: "flex", gap: "0.5rem", flex: 1, justifyContent: "center" } as React.CSSProperties,
   navBtn: {
     padding: "0.45rem 0.9rem",
     border: "1px solid transparent",
@@ -178,6 +196,42 @@ const layout = {
     background: "#1e293b",
     color: "white",
     fontWeight: 600,
+  } as React.CSSProperties,
+  session: { display: "flex", alignItems: "center", gap: "0.75rem" } as React.CSSProperties,
+  sessionInfo: { color: "#475569", fontSize: "0.88rem" } as React.CSSProperties,
+  tenantId: {
+    fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+    fontSize: "0.8rem",
+    background: "#f1f5f9",
+    padding: "0.1rem 0.35rem",
+    borderRadius: 3,
+  } as React.CSSProperties,
+  loginBtn: {
+    padding: "0.55rem 1.25rem",
+    background: "#16a34a",
+    color: "white",
+    border: "none",
+    borderRadius: 4,
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: "0.95rem",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+  } as React.CSSProperties,
+  logoutBtn: {
+    padding: "0.4rem 0.9rem",
+    background: "white",
+    color: "#475569",
+    border: "1px solid #cbd5e1",
+    borderRadius: 4,
+    cursor: "pointer",
+    fontSize: "0.85rem",
+  } as React.CSSProperties,
+  errorBar: {
+    background: "#fee2e2",
+    color: "#7f1d1d",
+    padding: "0.6rem 2rem",
+    borderBottom: "1px solid #f87171",
+    fontSize: "0.88rem",
   } as React.CSSProperties,
   main: { padding: "2rem", maxWidth: 1400, margin: "0 auto" } as React.CSSProperties,
   footer: {
