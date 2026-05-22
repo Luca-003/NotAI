@@ -682,6 +682,7 @@ function ChunksList({
               transition: "background 200ms",
             }}
           >
+            <ChunkLineageBadge chunkId={c.id} session={session} />
             <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginBottom: "0.2rem" }}>
               chunk #{c.ordering}
               {c.page_number != null && ` · pag. ${c.page_number}`}
@@ -711,6 +712,78 @@ function ChunksList({
   );
 }
 
+
+type ReverseProvenanceItem = {
+  id: string;
+  output_document_id: string;
+  output_section_id: string;
+  relation: string;
+  rationale: string | null;
+  confidence: number;
+};
+
+function ChunkLineageBadge({ chunkId, session }: { chunkId: string; session: Session }) {
+  const reverse = useQuery({
+    queryKey: ["reverse-provenance", chunkId],
+    queryFn: () =>
+      apiFetch<{ uses: ReverseProvenanceItem[]; count: number }>(
+        `/v1/documents/chunks/${chunkId}/reverse-provenance`,
+        {},
+        session.token,
+      ),
+    staleTime: 30_000,
+  });
+
+  if (!reverse.data || reverse.data.count === 0) return null;
+
+  // Raggruppa per output_document_id
+  const grouped: Record<string, ReverseProvenanceItem[]> = {};
+  for (const item of reverse.data.uses) {
+    (grouped[item.output_document_id] ||= []).push(item);
+  }
+
+  return (
+    <details
+      style={{
+        marginBottom: "0.4rem",
+        padding: "0.35rem 0.6rem",
+        background: "#ecfdf5",
+        border: "1px solid #6ee7b7",
+        borderRadius: 4,
+      }}
+    >
+      <summary style={{ cursor: "pointer", fontSize: "0.78rem", color: "#065f46", fontWeight: 600 }}>
+        ↗ Questo chunk e' usato in {reverse.data.count} sezion{reverse.data.count === 1 ? "e" : "i"} dell'atto generato
+      </summary>
+      <ul style={{ paddingLeft: "1rem", margin: "0.4rem 0", listStyle: "none" }}>
+        {Object.entries(grouped).map(([docId, items]) => (
+          <li key={docId} style={{ marginBottom: "0.4rem" }}>
+            <div style={{ fontSize: "0.72rem", color: "#475569", marginBottom: "0.2rem" }}>
+              Atto: <code>{docId.slice(0, 8)}…</code>
+            </div>
+            <ul style={{ paddingLeft: "1rem", margin: 0, listStyle: "disc" }}>
+              {items.map((it) => (
+                <li key={it.id} style={{ fontSize: "0.78rem", color: "#1f2937", marginBottom: "0.2rem" }}>
+                  Sezione <strong>{it.output_section_id}</strong>
+                  {" · "}
+                  <code style={{ fontSize: "0.68rem", background: "#f3f4f6", padding: "0 0.3rem", borderRadius: 2 }}>
+                    {it.relation}
+                  </code>
+                  {it.rationale && (
+                    <span style={{ color: "#6b7280" }}> — {it.rationale}</span>
+                  )}
+                  <span style={{ color: "#9ca3af", fontSize: "0.7rem", marginLeft: "0.3rem" }}>
+                    (conf {(it.confidence * 100).toFixed(0)}%)
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
 
 function classStatusColor(s: Chunk["classification_status"]): string {
   if (s === "done") return "#166534";
