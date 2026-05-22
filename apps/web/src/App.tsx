@@ -1,14 +1,12 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSession } from "./auth";
+import { rootUrl, useSession } from "./auth";
 import { LLMModelPicker } from "./components/LLMModelPicker";
 import { DemoLoader } from "./demo/DemoLoader";
 import { GuidePage } from "./guide/GuidePage";
 import { ModulesPage } from "./modules/ModulesPage";
 import { PracticesPage } from "./practices/PracticesPage";
 import { WikiPage } from "./wiki/WikiPage";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 type Tab = "dashboard" | "practices" | "wiki" | "guide" | "modules";
 
@@ -101,24 +99,19 @@ function NavButton({
 // Dashboard
 // ---------------------------------------------------------------------------
 
-type Health = { status: string };
 type Ready = { status: string; checks: Record<string, string> };
 
-async function fetchHealth(): Promise<Health> {
-  const res = await fetch(`${API_BASE.replace(/\/api$/, "")}/health`);
-  if (!res.ok) throw new Error(`health http ${res.status}`);
-  return res.json();
-}
-
 async function fetchReadyz(): Promise<Ready> {
-  const res = await fetch(`${API_BASE.replace(/\/api$/, "")}/readyz`);
+  const res = await fetch(`${rootUrl()}/readyz`);
   if (!res.ok) throw new Error(`readyz http ${res.status}`);
   return res.json();
 }
 
 function Dashboard({ session }: { session: import("./auth").Session | null }) {
-  const health = useQuery({ queryKey: ["health"], queryFn: fetchHealth, refetchInterval: 10_000 });
+  // Una sola query: /readyz e' superset di /health (se ready=ok l'API e' viva
+  // per definizione). Risparmia un endpoint di polling ogni 10s.
   const ready = useQuery({ queryKey: ["readyz"], queryFn: fetchReadyz, refetchInterval: 10_000 });
+  const liveness = ready.isLoading ? "..." : ready.isError ? "errore" : "ok";
 
   return (
     <div style={{ maxWidth: 960 }}>
@@ -129,9 +122,7 @@ function Dashboard({ session }: { session: import("./auth").Session | null }) {
           <tbody>
             <tr>
               <td style={cellLabel}>API liveness</td>
-              <td style={cellValue}>
-                {health.isLoading ? "..." : health.isError ? "errore" : health.data?.status}
-              </td>
+              <td style={cellValue}>{liveness}</td>
             </tr>
             <tr>
               <td style={cellLabel}>API readiness</td>

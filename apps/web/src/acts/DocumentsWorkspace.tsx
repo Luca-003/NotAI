@@ -11,6 +11,7 @@ import {
 import { card } from "../theme";
 import { KIND_INPUT_SOURCE, isInputKind } from "./kinds";
 import { truncate } from "../text";
+import { pollWhile } from "../hooks/polling";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
@@ -104,14 +105,12 @@ export function DocumentsWorkspace({
     queryKey: ["docs", actId],
     queryFn: () => apiFetch<Doc[]>(`/v1/acts/${actId}/documents`, {}, session.token),
     // Polling finche' qualche documento e' in pending/in_progress
-    refetchInterval: (q) => {
-      const data = q.state.data as Doc[] | undefined;
-      if (!data) return 3_000;
-      const pending = data.some(
-        (d) => d.ingestion_status === "pending" || d.ingestion_status === "in_progress",
-      );
-      return pending ? 3_000 : false;
-    },
+    refetchInterval: pollWhile<Doc[]>(
+      (data) =>
+        !data ||
+        data.some((d) => d.ingestion_status === "pending" || d.ingestion_status === "in_progress"),
+      3_000,
+    ),
   });
 
   const upload = useMutation({
@@ -504,13 +503,12 @@ function DocumentClassificationStrip({
         session.token,
       ),
     enabled: ingestionStatus === "done",
-    refetchInterval: (q) => {
-      const data = q.state.data as DocumentClassificationSummary | undefined;
-      if (!data) return 4_000;
-      const pending =
-        (data.status_counts.pending ?? 0) + (data.status_counts.in_progress ?? 0);
-      return pending > 0 ? 4_000 : false;
-    },
+    refetchInterval: pollWhile<DocumentClassificationSummary>(
+      (data) =>
+        !data ||
+        (data.status_counts.pending ?? 0) + (data.status_counts.in_progress ?? 0) > 0,
+      4_000,
+    ),
   });
 
   if (!summary.data) return null;
@@ -647,10 +645,7 @@ function ChunksList({
     queryKey: ["chunks", documentId],
     queryFn: () =>
       apiFetch<Chunk[]>(`/v1/documents/${documentId}/chunks`, {}, session.token),
-    refetchInterval: (q) => {
-      const data = q.state.data as Chunk[] | undefined;
-      return !data || data.length === 0 ? 3_000 : false;
-    },
+    refetchInterval: pollWhile<Chunk[]>((data) => !data || data.length === 0, 3_000),
   });
 
   // Una sola query per tutto il documento al posto di N (una per chunk).

@@ -8,6 +8,7 @@ import { DocumentsWorkspace } from "./DocumentsWorkspace";
 import { LineageGraph } from "./LineageGraph";
 import { useDocumentProvenance } from "./hooks/useProvenance";
 import { card } from "../theme";
+import { pollWhile } from "../hooks/polling";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 import { s } from "../practices/PracticesPage";
@@ -94,11 +95,10 @@ export function ActDetail({
     queryFn: () =>
       apiFetch<WorkflowStatusResponse>(`/v1/acts/${actId}/workflow/status`, {}, session.token),
     enabled: !!act.data?.workflow_run_id,
-    refetchInterval: (q) => {
-      const data = q.state.data as WorkflowStatusResponse | undefined;
-      if (!data) return 3_000;
-      return ACTIVE_STATUSES.has(data.state.status) ? 2_000 : false;
-    },
+    refetchInterval: pollWhile<WorkflowStatusResponse>(
+      (data) => !data || ACTIVE_STATUSES.has(data.state.status),
+      2_000,
+    ),
   });
 
   const review = useMutation({

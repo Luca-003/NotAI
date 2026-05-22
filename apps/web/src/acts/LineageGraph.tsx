@@ -136,155 +136,262 @@ export function LineageGraph({
         height={height}
         style={{ display: "block", minWidth: 1000 }}
       >
-        {/* column headers */}
-        <text x={COL_INPUT_X} y={18} fontSize={11} fontWeight={700} fill="#475569">
-          DOCUMENTI INPUT
-        </text>
-        <text x={COL_CHUNK_X} y={18} fontSize={11} fontWeight={700} fill="#475569">
-          CHUNK (sezioni di testo estratte)
-        </text>
-        <text x={COL_SECTION_X} y={18} fontSize={11} fontWeight={700} fill="#475569">
-          SEZIONI DELL&apos;ATTO
-        </text>
-
-        {/* edges first (so they sit behind nodes) */}
-        {edges.map((e) => {
-          const chY = chunkY[e.source_chunk_id];
-          const secY = sectionY[e.output_section_id];
-          if (chY === undefined || secY === undefined) return null;
-          const x1 = COL_CHUNK_X + NODE_W_CHUNK;
-          const y1 = chY + NODE_H / 2;
-          const x2 = COL_SECTION_X;
-          const y2 = secY + NODE_H / 2;
-          const mx = (x1 + x2) / 2;
-          const active = activeEdgeIds.has(e.id);
-          const stroke = active ? "#16a34a" : anyHover ? "#e5e5e5" : "#cbd5e1";
-          const opacity = active ? 1 : anyHover ? 0.35 : 0.7;
-          return (
-            <path
-              key={e.id}
-              d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
-              fill="none"
-              stroke={stroke}
-              strokeWidth={active ? 2.2 : 1.4}
-              opacity={opacity}
-            >
-              <title>{e.relation} (conf {(e.confidence * 100).toFixed(0)}%) — {e.rationale ?? ""}</title>
-            </path>
-          );
-        })}
-
-        {/* edges input doc -> its chunks (light grey, decorative) */}
-        {sortedChunks.map((c) => {
-          const dy = inputY[c.document_id];
-          if (dy === undefined) return null;
-          const x1 = COL_INPUT_X + NODE_W_INPUT;
-          const y1 = dy + NODE_H / 2;
-          const x2 = COL_CHUNK_X;
-          const y2 = chunkY[c.id] + NODE_H / 2;
-          const mx = (x1 + x2) / 2;
-          return (
-            <path
-              key={`grp-${c.id}`}
-              d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
-              fill="none"
-              stroke="#e2e8f0"
-              strokeWidth={1}
-              strokeDasharray="3,3"
-            />
-          );
-        })}
-
-        {/* input documents */}
-        {input_documents.map((d) => (
-          <g key={d.id} transform={`translate(${COL_INPUT_X}, ${inputY[d.id]})`}>
-            <rect
-              width={NODE_W_INPUT}
-              height={NODE_H}
-              rx={4}
-              fill="#1e293b"
-              stroke="#0f172a"
-            />
-            <text x={10} y={18} fontSize={11} fill="#94a3b8" fontWeight={600}>
-              {d.kind}
-            </text>
-            <text x={10} y={34} fontSize={12} fill="white" fontWeight={500}>
-              {truncate(d.filename, 36)}
-            </text>
-          </g>
-        ))}
-
-        {/* chunks */}
-        {sortedChunks.map((c) => {
-          const d = docById.get(c.document_id);
-          const isHover = hoveredChunk === c.id;
-          const tag = c.entity_type || c.document_type || "";
-          return (
-            <g
-              key={c.id}
-              transform={`translate(${COL_CHUNK_X}, ${chunkY[c.id]})`}
-              style={{ cursor: onSelectChunk ? "pointer" : "default" }}
-              onMouseEnter={() => setHoveredChunk(c.id)}
-              onMouseLeave={() => setHoveredChunk(null)}
-              onClick={() => d && onSelectChunk?.(d.id, c.id)}
-            >
-              <rect
-                width={NODE_W_CHUNK}
-                height={NODE_H}
-                rx={4}
-                fill={isHover ? "#dcfce7" : "#fff"}
-                stroke={isHover ? "#16a34a" : "#cbd5e1"}
-                strokeWidth={isHover ? 1.8 : 1}
-              />
-              <text x={10} y={16} fontSize={10} fill="#64748b" fontWeight={600}>
-                #{c.ordering}
-                {c.page_number !== null && c.page_number !== undefined && ` · p.${c.page_number}`}
-                {tag && ` · ${tag}`}
-              </text>
-              <text x={10} y={32} fontSize={11} fill="#1c1917">
-                {truncate(c.preview, 42)}
-              </text>
-            </g>
-          );
-        })}
-
-        {/* output sections */}
-        {lineage.data.output_sections.map((s) => {
-          const isHover = hoveredSection === s.id;
-          return (
-            <g
-              key={s.id}
-              transform={`translate(${COL_SECTION_X}, ${sectionY[s.id]})`}
-              style={{ cursor: "pointer" }}
-              onMouseEnter={() => setHoveredSection(s.id)}
-              onMouseLeave={() => setHoveredSection(null)}
-            >
-              <rect
-                width={NODE_W_SECTION}
-                height={NODE_H}
-                rx={4}
-                fill={isHover ? "#fef3c7" : "#fff"}
-                stroke={isHover ? "#f59e0b" : "#cbd5e1"}
-                strokeWidth={isHover ? 1.8 : 1}
-              />
-              <text x={10} y={18} fontSize={10} fill="#64748b" fontWeight={600}>
-                {s.id}
-              </text>
-              <text x={10} y={34} fontSize={12} fill="#1c1917" fontWeight={500}>
-                {truncate(s.title, 32)}
-              </text>
-            </g>
-          );
-        })}
+        <ColumnHeaders />
+        <EdgesLayer
+          edges={edges}
+          chunkY={chunkY}
+          sectionY={sectionY}
+          activeEdgeIds={activeEdgeIds}
+          anyHover={anyHover}
+        />
+        <DocChunkConnectors sortedChunks={sortedChunks} inputY={inputY} chunkY={chunkY} />
+        <InputColumn documents={input_documents} inputY={inputY} />
+        <ChunkColumn
+          sortedChunks={sortedChunks}
+          chunkY={chunkY}
+          hoveredChunk={hoveredChunk}
+          setHoveredChunk={setHoveredChunk}
+          docById={docById}
+          onSelectChunk={onSelectChunk}
+        />
+        <SectionColumn
+          sections={lineage.data.output_sections}
+          sectionY={sectionY}
+          hoveredSection={hoveredSection}
+          setHoveredSection={setHoveredSection}
+        />
       </svg>
 
       <div style={{ padding: "0.5rem 1rem", fontSize: "0.78rem", color: "#64748b", borderTop: "1px solid #e7e5e4" }}>
         Passa il mouse su un nodo per isolare i suoi collegamenti.
         {onSelectChunk && " Clicca su un chunk per aprirlo nel workspace."}
         {" "}
-        <strong>{edges.length}</strong> link · <strong>{chunks.length}</strong> chunk · <strong>{lineage.data.output_sections.length}</strong> sezioni.
+        <strong>{edges.length}</strong> link · <strong>{sortedChunks.length}</strong> chunk · <strong>{lineage.data.output_sections.length}</strong> sezioni.
       </div>
     </div>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Sub-components - split per leggibilita'. Pure rendering, niente state proprio.
+// ---------------------------------------------------------------------------
+
+type InputDoc = LineageNode["input_documents"][number];
+type ChunkNode = LineageNode["chunks"][number];
+type SectionNode = LineageNode["output_sections"][number];
+type EdgeNode = LineageNode["edges"][number];
+
+function ColumnHeaders() {
+  return (
+    <>
+      <text x={COL_INPUT_X} y={18} fontSize={11} fontWeight={700} fill="#475569">
+        DOCUMENTI INPUT
+      </text>
+      <text x={COL_CHUNK_X} y={18} fontSize={11} fontWeight={700} fill="#475569">
+        CHUNK (sezioni di testo estratte)
+      </text>
+      <text x={COL_SECTION_X} y={18} fontSize={11} fontWeight={700} fill="#475569">
+        SEZIONI DELL&apos;ATTO
+      </text>
+    </>
+  );
+}
+
+function EdgesLayer({
+  edges,
+  chunkY,
+  sectionY,
+  activeEdgeIds,
+  anyHover,
+}: {
+  edges: EdgeNode[];
+  chunkY: Record<string, number>;
+  sectionY: Record<string, number>;
+  activeEdgeIds: Set<string>;
+  anyHover: boolean;
+}) {
+  return (
+    <>
+      {edges.map((e) => {
+        const chY = chunkY[e.source_chunk_id];
+        const secY = sectionY[e.output_section_id];
+        if (chY === undefined || secY === undefined) return null;
+        const x1 = COL_CHUNK_X + NODE_W_CHUNK;
+        const y1 = chY + NODE_H / 2;
+        const x2 = COL_SECTION_X;
+        const y2 = secY + NODE_H / 2;
+        const mx = (x1 + x2) / 2;
+        const active = activeEdgeIds.has(e.id);
+        const stroke = active ? "#16a34a" : anyHover ? "#e5e5e5" : "#cbd5e1";
+        const opacity = active ? 1 : anyHover ? 0.35 : 0.7;
+        return (
+          <path
+            key={e.id}
+            d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={active ? 2.2 : 1.4}
+            opacity={opacity}
+          >
+            <title>{e.relation} (conf {(e.confidence * 100).toFixed(0)}%) — {e.rationale ?? ""}</title>
+          </path>
+        );
+      })}
+    </>
+  );
+}
+
+function DocChunkConnectors({
+  sortedChunks,
+  inputY,
+  chunkY,
+}: {
+  sortedChunks: ChunkNode[];
+  inputY: Record<string, number>;
+  chunkY: Record<string, number>;
+}) {
+  return (
+    <>
+      {sortedChunks.map((c) => {
+        const dy = inputY[c.document_id];
+        if (dy === undefined) return null;
+        const x1 = COL_INPUT_X + NODE_W_INPUT;
+        const y1 = dy + NODE_H / 2;
+        const x2 = COL_CHUNK_X;
+        const y2 = chunkY[c.id] + NODE_H / 2;
+        const mx = (x1 + x2) / 2;
+        return (
+          <path
+            key={`grp-${c.id}`}
+            d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
+            fill="none"
+            stroke="#e2e8f0"
+            strokeWidth={1}
+            strokeDasharray="3,3"
+          />
+        );
+      })}
+    </>
+  );
+}
+
+function InputColumn({
+  documents,
+  inputY,
+}: {
+  documents: InputDoc[];
+  inputY: Record<string, number>;
+}) {
+  return (
+    <>
+      {documents.map((d) => (
+        <g key={d.id} transform={`translate(${COL_INPUT_X}, ${inputY[d.id]})`}>
+          <rect width={NODE_W_INPUT} height={NODE_H} rx={4} fill="#1e293b" stroke="#0f172a" />
+          <text x={10} y={18} fontSize={11} fill="#94a3b8" fontWeight={600}>
+            {d.kind}
+          </text>
+          <text x={10} y={34} fontSize={12} fill="white" fontWeight={500}>
+            {truncate(d.filename, 36)}
+          </text>
+        </g>
+      ))}
+    </>
+  );
+}
+
+function ChunkColumn({
+  sortedChunks,
+  chunkY,
+  hoveredChunk,
+  setHoveredChunk,
+  docById,
+  onSelectChunk,
+}: {
+  sortedChunks: ChunkNode[];
+  chunkY: Record<string, number>;
+  hoveredChunk: string | null;
+  setHoveredChunk: (id: string | null) => void;
+  docById: Map<string, InputDoc>;
+  onSelectChunk?: (sourceDocumentId: string, chunkId: string) => void;
+}) {
+  return (
+    <>
+      {sortedChunks.map((c) => {
+        const d = docById.get(c.document_id);
+        const isHover = hoveredChunk === c.id;
+        const tag = c.entity_type || c.document_type || "";
+        return (
+          <g
+            key={c.id}
+            transform={`translate(${COL_CHUNK_X}, ${chunkY[c.id]})`}
+            style={{ cursor: onSelectChunk ? "pointer" : "default" }}
+            onMouseEnter={() => setHoveredChunk(c.id)}
+            onMouseLeave={() => setHoveredChunk(null)}
+            onClick={() => d && onSelectChunk?.(d.id, c.id)}
+          >
+            <rect
+              width={NODE_W_CHUNK}
+              height={NODE_H}
+              rx={4}
+              fill={isHover ? "#dcfce7" : "#fff"}
+              stroke={isHover ? "#16a34a" : "#cbd5e1"}
+              strokeWidth={isHover ? 1.8 : 1}
+            />
+            <text x={10} y={16} fontSize={10} fill="#64748b" fontWeight={600}>
+              #{c.ordering}
+              {c.page_number !== null && c.page_number !== undefined && ` · p.${c.page_number}`}
+              {tag && ` · ${tag}`}
+            </text>
+            <text x={10} y={32} fontSize={11} fill="#1c1917">
+              {truncate(c.preview, 42)}
+            </text>
+          </g>
+        );
+      })}
+    </>
+  );
+}
+
+function SectionColumn({
+  sections,
+  sectionY,
+  hoveredSection,
+  setHoveredSection,
+}: {
+  sections: SectionNode[];
+  sectionY: Record<string, number>;
+  hoveredSection: string | null;
+  setHoveredSection: (id: string | null) => void;
+}) {
+  return (
+    <>
+      {sections.map((s) => {
+        const isHover = hoveredSection === s.id;
+        return (
+          <g
+            key={s.id}
+            transform={`translate(${COL_SECTION_X}, ${sectionY[s.id]})`}
+            style={{ cursor: "pointer" }}
+            onMouseEnter={() => setHoveredSection(s.id)}
+            onMouseLeave={() => setHoveredSection(null)}
+          >
+            <rect
+              width={NODE_W_SECTION}
+              height={NODE_H}
+              rx={4}
+              fill={isHover ? "#fef3c7" : "#fff"}
+              stroke={isHover ? "#f59e0b" : "#cbd5e1"}
+              strokeWidth={isHover ? 1.8 : 1}
+            />
+            <text x={10} y={18} fontSize={10} fill="#64748b" fontWeight={600}>
+              {s.id}
+            </text>
+            <text x={10} y={34} fontSize={12} fill="#1c1917" fontWeight={500}>
+              {truncate(s.title, 32)}
+            </text>
+          </g>
+        );
+      })}
+    </>
+  );
+}

@@ -15,6 +15,11 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const TOKEN_KEY = "notai.jwt";
 const TENANT_KEY = "notai.tenant_id";
 
+/** Root del server (senza il `/api`). Per endpoint cross-cutting come `/health`, `/readyz`. */
+export function rootUrl(): string {
+  return API_BASE.replace(/\/api$/, "");
+}
+
 export const DEMO_SLUG = "studio-demo";
 
 export type Session = {
