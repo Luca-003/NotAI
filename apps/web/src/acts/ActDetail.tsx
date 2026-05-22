@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch, type Session } from "../auth";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 import { s } from "../practices/PracticesPage";
 
 type Act = {
@@ -14,9 +16,17 @@ type Act = {
   workflow_run_id: string | null;
 };
 
+type Visura = {
+  source: string;
+  found: boolean;
+  hash: string;
+  summary?: string;
+  data?: Record<string, unknown>;
+};
+
 type WorkflowState = {
   status: string;
-  visure: { source: string; found: boolean; hash: string }[];
+  visure: Visura[];
   draft: { document_id: string; sha256: string; storage_uri: string } | null;
   tax: { items: TaxItem[]; total: number } | null;
   review: { decision: string; user_id: string | null } | null;
@@ -284,31 +294,9 @@ function WorkflowView({
         <ProgressSteps status={state.status} />
       </section>
 
-      {state.visure.length > 0 && (
-        <section style={card}>
-          <h3 style={{ marginTop: 0 }}>Visure</h3>
-          <ul style={{ paddingLeft: "1.2rem" }}>
-            {state.visure.map((v, i) => (
-              <li key={i}>
-                <strong>{v.source}</strong>:{" "}
-                {v.found ? "trovata" : "non trovata"}{" "}
-                <code style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
-                  hash={v.hash.slice(0, 12)}…
-                </code>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {state.visure.length > 0 && <VisureSection visure={state.visure} />}
 
-      {state.draft && (
-        <section style={card}>
-          <h3 style={{ marginTop: 0 }}>Bozza generata</h3>
-          <div><strong>Document ID:</strong> <code>{state.draft.document_id}</code></div>
-          <div><strong>SHA-256:</strong> <code style={{ fontSize: "0.78rem" }}>{state.draft.sha256}</code></div>
-          <div><strong>Storage:</strong> <code style={{ fontSize: "0.78rem" }}>{state.draft.storage_uri}</code></div>
-        </section>
-      )}
+      {state.draft && <DraftViewer draft={state.draft} />}
 
       {state.tax && (
         <section style={card}>
@@ -408,6 +396,124 @@ function ProgressSteps({ status }: { status: string }) {
         );
       })}
     </div>
+  );
+}
+
+function VisureSection({ visure }: { visure: Visura[] }) {
+  return (
+    <section style={card}>
+      <h3 style={{ marginTop: 0 }}>Visure acquisite automaticamente</h3>
+      <div style={{ display: "grid", gap: "0.75rem" }}>
+        {visure.map((v, i) => (
+          <div key={i} style={{ border: "1px solid #e2e8f0", borderRadius: 4, padding: "0.75rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.4rem" }}>
+              <strong>{v.source.toUpperCase()}</strong>
+              <span
+                style={{
+                  fontSize: "0.78rem",
+                  padding: "0.1rem 0.5rem",
+                  borderRadius: 999,
+                  background: v.found ? "#dcfce7" : "#fee2e2",
+                  color: v.found ? "#166534" : "#7f1d1d",
+                  fontWeight: 600,
+                }}
+              >
+                {v.found ? "✓ trovata" : "✕ non trovata"}
+              </span>
+            </div>
+            {v.summary && <div style={{ marginBottom: "0.4rem", color: "#1e293b" }}>{v.summary}</div>}
+            {v.data && Object.keys(v.data).length > 0 && (
+              <details>
+                <summary style={{ cursor: "pointer", fontSize: "0.85rem", color: "#64748b" }}>
+                  Mostra dati grezzi
+                </summary>
+                <pre style={{ fontSize: "0.78rem", background: "#f8fafc", padding: "0.5rem", borderRadius: 3, overflow: "auto", maxHeight: 300 }}>
+                  {JSON.stringify(v.data, null, 2)}
+                </pre>
+              </details>
+            )}
+            <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: "0.3rem" }}>
+              hash riproducibile: <code>{v.hash.slice(0, 16)}…</code>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DraftViewer({
+  draft,
+}: {
+  draft: { document_id: string; sha256: string; storage_uri: string };
+}) {
+  const content = useQuery({
+    queryKey: ["doc-content", draft.document_id],
+    queryFn: async () => {
+      const token = localStorage.getItem("notai.jwt");
+      const r = await fetch(
+        `${API_BASE}/v1/documents/${draft.document_id}/content`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.text();
+    },
+  });
+
+  const download = () => {
+    if (!content.data) return;
+    const blob = new Blob([content.data], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `bozza-${draft.document_id.slice(0, 8)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <section style={card}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+        <h3 style={{ margin: 0 }}>Documento atto (bozza)</h3>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button onClick={download} disabled={!content.data} style={s.primaryBtn}>
+            ⬇ Scarica .md
+          </button>
+        </div>
+      </div>
+      <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: "0.5rem" }}>
+        <code>{draft.document_id}</code> · sha256{" "}
+        <code>{draft.sha256.slice(0, 16)}…</code>
+      </div>
+
+      {content.isLoading && <p>Carico documento...</p>}
+      {content.isError && (
+        <div style={{ background: "#fee2e2", color: "#7f1d1d", padding: "0.5rem 0.75rem", borderRadius: 4 }}>
+          Errore caricamento documento: {String(content.error)}. Il documento e' stato
+          comunque registrato nel DB con hash <code>{draft.sha256.slice(0, 12)}…</code>.
+        </div>
+      )}
+
+      {content.data && (
+        <article
+          style={{
+            background: "#fafaf9",
+            border: "1px solid #e7e5e4",
+            borderRadius: 4,
+            padding: "1.25rem 1.5rem",
+            maxHeight: 560,
+            overflowY: "auto",
+            fontFamily: "Georgia, 'Times New Roman', serif",
+            lineHeight: 1.7,
+            whiteSpace: "pre-wrap",
+            fontSize: "0.95rem",
+            color: "#1c1917",
+          }}
+        >
+          {content.data}
+        </article>
+      )}
+    </section>
   );
 }
 

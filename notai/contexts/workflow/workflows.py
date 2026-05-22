@@ -124,7 +124,18 @@ class AtoWorkflow:
             )
         visure_results: list[VisuraResult] = await asyncio.gather(*visure_tasks)
         self._state.visure = [
-            {"source": r.source, "found": r.found, "hash": r.hash} for r in visure_results
+            {
+                "source": r.source,
+                "found": r.found,
+                "hash": r.hash,
+                "summary": (r.payload or {}).get("_summary", ""),
+                "data": {
+                    k: v
+                    for k, v in (r.payload or {}).items()
+                    if k not in {"_meta", "_summary"}
+                },
+            }
+            for r in visure_results
         ]
 
         # 2) Generazione bozza
@@ -137,7 +148,9 @@ class AtoWorkflow:
                 slots={
                     "parties": input.parties,
                     "visure_count": len(visure_results),
+                    "visure_summaries": self._state.visure,
                     "base_imponibile": input.base_imponibile,
+                    "is_prima_casa": input.is_prima_casa,
                 },
             ),
             start_to_close_timeout=timedelta(seconds=60),
