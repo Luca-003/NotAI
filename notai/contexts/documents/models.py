@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -61,5 +61,42 @@ class Document(IdMixin, TenantMixin, TimestampsMixin, SoftDeleteMixin, Base):
     retention_class: Mapped[str] = mapped_column(String(32), nullable=False, server_default="nessuna")
     extra: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
 
+    # Ingestion pipeline (parsing + chunking + embeddings)
+    # Stato: pending | in_progress | done | failed | skipped
+    ingestion_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="pending"
+    )
+    ingestion_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ingested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
-__all__ = ["Document"]
+
+class DocumentChunk(IdMixin, TenantMixin, TimestampsMixin, Base):
+    """Chunk testuale estratto da un Document - unita' di ricerca e provenance."""
+
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        UniqueConstraint("document_id", "ordering", name="uq_document_chunks_doc_order"),
+    )
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    ordering: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    char_start: Mapped[int] = mapped_column(Integer, nullable=False)
+    char_end: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # True quando il chunk e' stato anche caricato nel vector store
+    embedding_indexed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    extra: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+
+
+__all__ = ["Document", "DocumentChunk"]

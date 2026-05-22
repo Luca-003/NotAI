@@ -40,7 +40,8 @@ class RetrievedChunk:
 _client: AsyncQdrantClient | None = None
 
 
-def _qdrant() -> AsyncQdrantClient:
+def get_qdrant() -> AsyncQdrantClient:
+    """Singleton lazy del client async Qdrant (riusato tra moduli)."""
     global _client
     if _client is None:
         s = get_settings()
@@ -52,6 +53,10 @@ def _qdrant() -> AsyncQdrantClient:
             timeout=30,
         )
     return _client
+
+
+# Alias retro-compatibile (le call interne lo usano ancora)
+_qdrant = get_qdrant
 
 
 def _stable_chunk_id(citation: str, text: str) -> int:

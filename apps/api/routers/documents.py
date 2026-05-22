@@ -5,14 +5,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from apps.api.deps import DbDep, TenantDep
 from notai.contexts.audit.logger import audit_logger
-from notai.contexts.documents.models import Document
+from notai.contexts.documents.ingestion import ingest_document
+from notai.contexts.documents.models import Document, DocumentChunk
 from notai.contexts.documents.storage import get_blob, parse_storage_uri, put_blob
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -46,6 +47,34 @@ class DocumentRead(BaseModel):
     sha256: str
     version: int
     created_at: datetime
+    ingestion_status: str
+    ingestion_error: str | None
+    ingested_at: datetime | None
+
+
+class ChunkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    document_id: uuid.UUID
+    ordering: int
+    text: str
+    char_start: int
+    char_end: int
+    page_number: int | None
+    embedding_indexed: bool
+    token_count: int | None
+
+
+async def _run_ingestion_safely(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
+    """Wrapper sicuro per BackgroundTasks: cattura errori per non far crashare il worker."""
+    import structlog
+
+    log = structlog.get_logger(__name__)
+    try:
+        await ingest_document(document_id, tenant_id)
+    except Exception as e:  # noqa: BLE001
+        log.exception("notai.ingest.background_failed", document_id=str(document_id), error=str(e))
 
 
 async def _load_doc(session, doc_id: uuid.UUID) -> Document:
@@ -66,6 +95,7 @@ async def _load_doc(session, doc_id: uuid.UUID) -> Document:
 async def upload_document(
     principal: TenantDep,
     session: DbDep,
+    background: BackgroundTasks,
     file: UploadFile = File(...),
     kind: str = Form("input_source"),
     practice_id: uuid.UUID | None = Form(None),
@@ -140,6 +170,16 @@ async def upload_document(
         actor=principal.as_actor(),
     )
 
+    # COMMIT esplicito PRIMA di schedulare il background: FastAPI esegue le
+    # BackgroundTasks dopo che la response e' stata inviata, ma il cleanup
+    # delle dependency con `yield` avviene a sua volta dopo la response, quindi
+    # il commit di `DbDep` non e' garantito che preceda il background task.
+    # Senza questo commit, il background apre una nuova session e non vede il
+    # documento appena inserito (RLS non c'entra: il problema e' transazionale).
+    await session.commit()
+
+    background.add_task(_run_ingestion_safely, doc_id, principal.tenant_id)
+
     return DocumentRead.model_validate(doc)
 
 
@@ -191,6 +231,34 @@ async def get_document_content(
 # ---------------------------------------------------------------------------
 # Soft delete
 # ---------------------------------------------------------------------------
+
+
+@router.get("/{document_id}/chunks", response_model=list[ChunkRead])
+async def list_document_chunks(
+    document_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> list[ChunkRead]:
+    """Ritorna i chunk testuali estratti dalla pipeline di ingestion."""
+    del principal
+    await _load_doc(session, document_id)
+    rows = await session.execute(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.ordering.asc())
+    )
+    return [ChunkRead.model_validate(c) for c in rows.scalars().all()]
+
+
+@router.post("/{document_id}/reingest", status_code=status.HTTP_202_ACCEPTED)
+async def reingest_document(
+    document_id: uuid.UUID,
+    principal: TenantDep,
+    session: DbDep,
+    background: BackgroundTasks,
+) -> dict:
+    """Forza un re-run della pipeline (utile dopo cambio modello embeddings)."""
+    await _load_doc(session, document_id)
+    background.add_task(_run_ingestion_safely, document_id, principal.tenant_id)
+    return {"scheduled": True, "document_id": str(document_id)}
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

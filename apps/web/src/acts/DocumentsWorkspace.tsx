@@ -14,6 +14,21 @@ type Doc = {
   kind: string;
   sha256: string;
   created_at: string;
+  ingestion_status: "pending" | "in_progress" | "done" | "failed" | "skipped";
+  ingestion_error: string | null;
+  ingested_at: string | null;
+};
+
+type Chunk = {
+  id: string;
+  document_id: string;
+  ordering: number;
+  text: string;
+  char_start: number;
+  char_end: number;
+  page_number: number | null;
+  embedding_indexed: boolean;
+  token_count: number | null;
 };
 
 export function DocumentsWorkspace({
@@ -31,6 +46,15 @@ export function DocumentsWorkspace({
   const docs = useQuery({
     queryKey: ["docs", actId],
     queryFn: () => apiFetch<Doc[]>(`/v1/acts/${actId}/documents`, {}, session.token),
+    // Polling finche' qualche documento e' in pending/in_progress
+    refetchInterval: (q) => {
+      const data = q.state.data as Doc[] | undefined;
+      if (!data) return 3_000;
+      const pending = data.some(
+        (d) => d.ingestion_status === "pending" || d.ingestion_status === "in_progress",
+      );
+      return pending ? 2_000 : false;
+    },
   });
 
   const upload = useMutation({
@@ -183,6 +207,7 @@ function DocumentList({
                     <code style={{ fontSize: "0.7rem" }}>{d.sha256.slice(0, 10)}…</code>
                   </span>
                 </span>
+                <IngestionBadge doc={d} />
               </button>
               {onDelete && (
                 <button
@@ -200,6 +225,37 @@ function DocumentList({
     </div>
   );
 }
+
+function IngestionBadge({ doc }: { doc: Doc }) {
+  const conf: Record<Doc["ingestion_status"], { label: string; bg: string; fg: string }> = {
+    pending: { label: "in coda", bg: "#fef3c7", fg: "#78350f" },
+    in_progress: { label: "elaboro…", bg: "#dbeafe", fg: "#1e40af" },
+    done: { label: "letto", bg: "#dcfce7", fg: "#166534" },
+    failed: { label: "errore", bg: "#fee2e2", fg: "#7f1d1d" },
+    skipped: { label: "non leggibile", bg: "#f1f5f9", fg: "#64748b" },
+  };
+  const c = conf[doc.ingestion_status];
+  return (
+    <span
+      title={doc.ingestion_error ?? doc.ingestion_status}
+      style={{
+        padding: "0.1rem 0.5rem",
+        background: c.bg,
+        color: c.fg,
+        borderRadius: 999,
+        fontSize: "0.7rem",
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+        fontWeight: 600,
+        whiteSpace: "nowrap",
+        marginLeft: "auto",
+      }}
+    >
+      {c.label}
+    </span>
+  );
+}
+
 
 function DocumentPreview({
   documentId,
@@ -252,11 +308,72 @@ function DocumentPreview({
               <a href={blobQ.data.objectUrl} download>scarica il file</a>
             </div>
           )}
+
+          <ChunksList documentId={documentId} session={session} />
         </div>
       )}
     </div>
   );
 }
+
+function ChunksList({ documentId, session }: { documentId: string; session: Session }) {
+  const chunks = useQuery({
+    queryKey: ["chunks", documentId],
+    queryFn: () =>
+      apiFetch<Chunk[]>(`/v1/documents/${documentId}/chunks`, {}, session.token),
+    refetchInterval: (q) => {
+      const data = q.state.data as Chunk[] | undefined;
+      // Refresh ogni 2s finche' la lista e' vuota (ingestion potrebbe essere in corso)
+      return !data || data.length === 0 ? 2_000 : false;
+    },
+  });
+
+  if (chunks.isLoading) return <div style={{ padding: "0.75rem" }}>Cerco chunks…</div>;
+  if (chunks.isError) return <div style={styles.error}>{String(chunks.error)}</div>;
+  if (!chunks.data || chunks.data.length === 0) {
+    return (
+      <div style={{ marginTop: "1rem", padding: "0.75rem", background: "#fef3c7", color: "#78350f", borderRadius: 4, fontSize: "0.85rem" }}>
+        Ingestion non ancora completata o documento non leggibile (formato non
+        supportato).
+      </div>
+    );
+  }
+
+  return (
+    <details style={{ marginTop: "1rem" }} open>
+      <summary style={{ cursor: "pointer", fontWeight: 600, color: "#475569" }}>
+        Chunks estratti ({chunks.data.length}) — il sistema li usera' per generare l'atto
+      </summary>
+      <ol style={{ paddingLeft: "1.5rem", marginTop: "0.5rem" }}>
+        {chunks.data.map((c) => (
+          <li key={c.id} style={{ marginBottom: "0.75rem" }}>
+            <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginBottom: "0.2rem" }}>
+              chunk #{c.ordering}
+              {c.page_number != null && ` · pag. ${c.page_number}`}
+              {" · "}offset {c.char_start}-{c.char_end}
+              {c.embedding_indexed ? " · ✓ indicizzato" : " · vector ko"}
+              {c.token_count != null && ` · ~${c.token_count} token`}
+            </div>
+            <div
+              style={{
+                background: "white",
+                border: "1px solid #e2e8f0",
+                padding: "0.5rem 0.75rem",
+                borderRadius: 3,
+                fontSize: "0.88rem",
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {c.text}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 
 function TextBlob({ url }: { url: string }) {
   const q = useQuery({
