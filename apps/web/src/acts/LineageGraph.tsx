@@ -3,8 +3,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
+import { apiFetch } from "../auth";
 
 type LineageNode = {
   input_documents: { id: string; filename: string; kind: string }[];
@@ -52,26 +51,19 @@ export function LineageGraph({
 
   const lineage = useQuery({
     queryKey: ["doc-lineage", documentId],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE}/v1/documents/${documentId}/lineage`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return (await r.json()) as LineageNode;
-    },
+    queryFn: () =>
+      apiFetch<LineageNode>(`/v1/documents/${documentId}/lineage`, {}, token ?? undefined),
   });
 
   const layout = useMemo(() => {
     if (!lineage.data) return null;
     const { input_documents, chunks, output_sections, edges } = lineage.data;
 
-    // y-positions for each column
     const inputY: Record<string, number> = {};
     input_documents.forEach((d, i) => {
       inputY[d.id] = TOP_PAD + i * (NODE_H + V_GAP * 2);
     });
 
-    // chunks ordered by (document index, ordering)
     const sortedChunks = [...chunks].sort((a, b) => {
       const ai = input_documents.findIndex((d) => d.id === a.document_id);
       const bi = input_documents.findIndex((d) => d.id === b.document_id);
@@ -95,8 +87,21 @@ export function LineageGraph({
       200,
     ) + 20;
 
-    return { inputY, chunkY, sectionY, sortedChunks, edges, height };
+    const docById = new Map(input_documents.map((d) => [d.id, d]));
+
+    return { inputY, chunkY, sectionY, sortedChunks, edges, height, docById };
   }, [lineage.data]);
+
+  const activeEdgeIds = useMemo(() => {
+    if (!lineage.data) return new Set<string>();
+    if (!hoveredSection && !hoveredChunk) return new Set<string>();
+    const acc = new Set<string>();
+    for (const e of lineage.data.edges) {
+      if (hoveredSection && e.output_section_id === hoveredSection) acc.add(e.id);
+      else if (hoveredChunk && e.source_chunk_id === hoveredChunk) acc.add(e.id);
+    }
+    return acc;
+  }, [lineage.data, hoveredSection, hoveredChunk]);
 
   if (lineage.isLoading) {
     return <div style={{ padding: "1rem", color: "#64748b" }}>Carico lineage…</div>;
@@ -119,17 +124,8 @@ export function LineageGraph({
     );
   }
 
-  const { input_documents, chunks } = lineage.data;
-  const { inputY, chunkY, sectionY, sortedChunks, edges, height } = layout;
-
-  const docById = new Map(input_documents.map((d) => [d.id, d]));
-  const chunkById = new Map(chunks.map((c) => [c.id, c]));
-
-  const isEdgeActive = (e: { source_chunk_id: string; output_section_id: string }) => {
-    if (hoveredSection && e.output_section_id === hoveredSection) return true;
-    if (hoveredChunk && e.source_chunk_id === hoveredChunk) return true;
-    return false;
-  };
+  const { input_documents } = lineage.data;
+  const { inputY, chunkY, sectionY, sortedChunks, edges, height, docById } = layout;
   const anyHover = hoveredSection !== null || hoveredChunk !== null;
 
   return (
@@ -160,7 +156,7 @@ export function LineageGraph({
           const x2 = COL_SECTION_X;
           const y2 = secY + NODE_H / 2;
           const mx = (x1 + x2) / 2;
-          const active = isEdgeActive(e);
+          const active = activeEdgeIds.has(e.id);
           const stroke = active ? "#16a34a" : anyHover ? "#e5e5e5" : "#cbd5e1";
           const opacity = active ? 1 : anyHover ? 0.35 : 0.7;
           return (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
+from apps.api.deps import TenantDep
 from notai.contexts.drafting.registry import (
     all_templates,
     get_template,
@@ -68,10 +69,11 @@ async def get_template_detail(template_id: str) -> dict:
 
 
 @router.post("/reload")
-async def reload_registry() -> dict:
+async def reload_registry(principal: TenantDep) -> dict:
     """Forza il ricaricamento dei template dal filesystem (per dev / dopo upload).
 
-    In produzione richiedera' permesso admin (Fase 5+).
+    Richiede tenant autenticato (in Fase 5+ servira' anche ruolo admin).
     """
+    del principal
     n = reload_templates()
     return {"count": n}

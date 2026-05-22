@@ -194,6 +194,33 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
+    def assert_prod_safe(self) -> None:
+        """Fail-closed in produzione: nessun segreto deve essere ancora 'change_me_*'.
+
+        Chiamato da `apps/api/main.py` allo startup quando env == 'prod'.
+        """
+        if self.env != "prod":
+            return
+        unsafe_prefixes = ("change_me", "dev-only", "sk-change", "dev_")
+        checks = [
+            ("NOTAI_JWT_SECRET", self.jwt_secret),
+            ("POSTGRES_PASSWORD", self.postgres.password),
+            ("MINIO_ROOT_PASSWORD", self.minio.root_password),
+            ("VAULT_TOKEN", self.vault.token),
+            ("LITELLM_MASTER_KEY", self.litellm.master_key),
+        ]
+        offenders = [
+            name
+            for name, secret in checks
+            if any(secret.get_secret_value().startswith(p) for p in unsafe_prefixes)
+        ]
+        if offenders:
+            raise RuntimeError(
+                "Refusing to start in prod: default secrets detected for "
+                + ", ".join(offenders)
+                + ". Set them via env/secrets manager."
+            )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

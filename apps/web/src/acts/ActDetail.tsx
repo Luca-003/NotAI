@@ -448,11 +448,12 @@ const STEPS = [
 
 function ProgressSteps({ status }: { status: string }) {
   const idx = STEPS.findIndex((s) => s.id === status);
+  const completed = status === "review_completed";
   return (
     <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem", flexWrap: "wrap" }}>
       {STEPS.map((step, i) => {
-        const done = idx > i || (idx === STEPS.length - 1 && status === "review_completed");
-        const current = i === idx;
+        const done = idx > i || completed;
+        const current = i === idx && !completed;
         return (
           <div
             key={step.id}

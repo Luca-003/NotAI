@@ -429,17 +429,13 @@ async def get_document_lineage_graph(
         for c in chunks_by_id.values()
     ]
 
-    sections_payload = [
-        {
-            "id": (s.get("id") or ""),
-            "title": (s.get("title") or ""),
-        }
+    referenced_section_ids = {link.output_section_id for link in links}
+    all_sections = [
+        {"id": s.get("id") or "", "title": s.get("title") or ""}
         for s in (out_doc.sections or [])
     ]
-    referenced_section_ids = {link.output_section_id for link in links}
-    sections_payload = [
-        s for s in sections_payload if s["id"] in referenced_section_ids
-    ] or sections_payload
+    referenced_only = [s for s in all_sections if s["id"] in referenced_section_ids]
+    sections_payload = referenced_only or all_sections
 
     edges = [
         {

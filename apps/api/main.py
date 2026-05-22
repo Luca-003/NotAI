@@ -58,6 +58,7 @@ def _configure_logging(level: str) -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     _configure_logging(settings.log_level)
+    settings.assert_prod_safe()
     logger.info("notai.api.startup", env=settings.env)
     # TODO: warmup connessioni (DB pool, Temporal client, MinIO, ecc.)
     yield
