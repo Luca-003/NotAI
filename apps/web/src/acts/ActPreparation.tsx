@@ -145,13 +145,33 @@ export function ActPreparation({
 
   return (
     <div style={{ maxWidth: 1100 }}>
-      <h2 style={{ marginTop: 0 }}>Preparazione atto</h2>
-      <p style={{ color: "#475569", fontSize: "0.92rem", marginTop: 0 }}>
-        Prima di generare la bozza, NotAI deve aver catalogato tutti i documenti
-        di input e acquisito le visure necessarie dal template. Al termine,
-        clicca <strong>"Procedi alla generazione"</strong> per avviare il
-        workflow di redazione.
-      </p>
+      {/* Status bar compatta in alto */}
+      <PreparationStatusBar
+        s={s}
+        step1Done={step1Done}
+        step2Missing={step2Missing}
+        step3Done={step3Done}
+        consolidate={consolidate}
+        consolidatedAlready={consolidatedAlready}
+        onProceed={onProceed}
+        canExecute={s.can_execute}
+      />
+
+      {/* Workspace documenti: IN ALTO perche' e' il vero centro dell'azione */}
+      <section style={{ marginTop: "1rem" }}>
+        <DocumentsWorkspace
+          session={session}
+          actId={actId}
+          selectedSource={null}
+          onClearSelection={() => {}}
+        />
+      </section>
+
+      {/* Dettagli step + acquire visure: collapsable sotto */}
+      <details style={{ marginTop: "1.5rem" }} open={!consolidatedAlready}>
+        <summary style={{ cursor: "pointer", fontWeight: 600, color: "#475569", padding: "0.4rem 0" }}>
+          Dettagli dei passaggi di preparazione
+        </summary>
 
       <StepCard
         n={1}
@@ -318,14 +338,89 @@ export function ActPreparation({
         }
       />
 
-      <h3 style={{ marginTop: "2rem" }}>Workspace documenti</h3>
-      <DocumentsWorkspace
-        session={session}
-        actId={actId}
-        selectedSource={null}
-        onClearSelection={() => {}}
-      />
+      </details>
     </div>
+  );
+}
+
+function PreparationStatusBar({
+  s,
+  step1Done,
+  step2Missing,
+  step3Done,
+  consolidate,
+  consolidatedAlready,
+  onProceed,
+  canExecute,
+}: {
+  s: PrepStatus;
+  step1Done: boolean;
+  step2Missing: number;
+  step3Done: boolean;
+  consolidate: { mutate: () => void; isPending: boolean };
+  consolidatedAlready: boolean;
+  onProceed: () => void;
+  canExecute: boolean;
+}) {
+  const slotsCount = s.preview_slots ? Object.keys(s.preview_slots.slots).length : 0;
+  const stepDot = (ok: boolean, n: number, label: string) => (
+    <div style={{
+      display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.85rem",
+      color: ok ? "#14532d" : "#64748b",
+    }}>
+      <span style={{
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        width: 22, height: 22, borderRadius: "50%",
+        background: ok ? "#16a34a" : "#cbd5e1", color: "white",
+        fontWeight: 700, fontSize: "0.78rem",
+      }}>{ok ? "✓" : n}</span>
+      {label}
+    </div>
+  );
+  return (
+    <section style={{
+      background: "white", border: "1px solid #e2e8f0", borderRadius: 6,
+      padding: "0.75rem 1rem", display: "flex", alignItems: "center",
+      justifyContent: "space-between", flexWrap: "wrap", gap: "1rem",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+        {stepDot(step1Done, 1, `Catalogo (${s.step1_catalog.documents_classified}/${s.step1_catalog.documents_total} doc)`)}
+        {stepDot(step2Missing === 0 && s.step2_visure_needed.expected_document_types.length > 0, 2, `Tipi previsti (${s.step2_visure_needed.covered.length}/${s.step2_visure_needed.expected_document_types.length})`)}
+        {stepDot(s.step3_visure_acquired.count > 0 && step3Done, 3, `Visure auto (${s.step3_visure_acquired.count})`)}
+        {stepDot(slotsCount > 0, 4, `Slot estratti (${slotsCount})`)}
+        {stepDot(consolidatedAlready, 5, "Consolida")}
+      </div>
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+        {!consolidatedAlready && (
+          <button
+            onClick={() => consolidate.mutate()}
+            disabled={!step1Done || consolidate.isPending}
+            style={{
+              padding: "0.5rem 1rem",
+              background: step1Done ? "#1e293b" : "#cbd5e1",
+              color: "white", border: "none", borderRadius: 4,
+              cursor: step1Done ? "pointer" : "not-allowed", fontWeight: 600,
+              fontSize: "0.88rem",
+            }}
+          >
+            {consolidate.isPending ? "..." : "✓ Consolida"}
+          </button>
+        )}
+        {canExecute && (
+          <button
+            onClick={onProceed}
+            style={{
+              padding: "0.55rem 1.15rem",
+              background: "#16a34a", color: "white",
+              border: "none", borderRadius: 4, cursor: "pointer",
+              fontWeight: 700, fontSize: "0.95rem",
+            }}
+          >
+            ▶ Procedi alla generazione
+          </button>
+        )}
+      </div>
+    </section>
   );
 }
 

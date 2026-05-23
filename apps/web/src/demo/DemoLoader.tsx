@@ -49,6 +49,21 @@ export function DemoLoader({
           },
           session.token,
         );
+
+        // 3. Auto-upload dei documenti del case-study corrispondente.
+        // Cosi' l'utente apre l'atto e trova gia' tutto pronto per classificare.
+        // Best-effort: se l'endpoint dev/scenarios non e' disponibile o lo
+        // scenario non ha case-study, andiamo avanti senza errore.
+        try {
+          await apiFetch(
+            `/v1/dev/scenarios/${sc.id}/upload-to-act/${act.id}`,
+            { method: "POST" },
+            session.token,
+          );
+        } catch (e) {
+          console.warn(`Upload demo docs failed per ${sc.id}:`, e);
+        }
+
         results.push({ scenario: sc, practice_id: practice.id, act_id: act.id });
       }
       return results;
@@ -56,6 +71,7 @@ export function DemoLoader({
     onSuccess: (res) => {
       setLoaded(res);
       qc.invalidateQueries({ queryKey: ["practices"] });
+      qc.invalidateQueries({ queryKey: ["workspace-tree"] });
     },
   });
 
@@ -67,7 +83,8 @@ export function DemoLoader({
           <p style={styles.help}>
             Crea 6 pratiche di esempio (3 notarile: compravendita, donazione,
             costituzione SRL · 3 legale: citazione, decreto ingiuntivo,
-            separazione consensuale) con parti precompilate.
+            separazione consensuale) <strong>con i documenti gia' caricati</strong>.
+            Apri un atto e vedrai parsing + classificazione LLM in corso.
           </p>
         </div>
         <button
