@@ -8,6 +8,7 @@ import { buildHref, type Tab } from "../routing";
 // apiFetch usato in mutations DraftViewer (provenance confirm/remove)
 import { DocumentsWorkspace } from "./DocumentsWorkspace";
 import { LineageGraph } from "./LineageGraph";
+import { ConceptMap } from "./ConceptMap";
 import { useDocumentProvenance } from "./hooks/useProvenance";
 import { card } from "../theme";
 import { pollWhile } from "../hooks/polling";
@@ -563,7 +564,7 @@ function DraftViewer({
   onSelectSource: (documentId: string, chunkId: string) => void;
 }) {
   const qc = useQueryClient();
-  const [showLineage, setShowLineage] = useState(false);
+  const [viewMode, setViewMode] = useState<"none" | "graph" | "map">("none");
 
   const sections = useQuery({
     queryKey: ["doc-sections", draft.document_id],
@@ -621,9 +622,20 @@ function DraftViewer({
     <section style={card}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
         <h3 style={{ margin: 0 }}>Documento atto (bozza)</h3>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <button onClick={() => setShowLineage((v) => !v)} style={s.secondaryBtn}>
-            {showLineage ? "▼ nascondi lineage" : "▶ vedi lineage grafico"}
+        <div style={{ display: "flex", gap: "0.4rem" }}>
+          <button
+            onClick={() => setViewMode((m) => (m === "graph" ? "none" : "graph"))}
+            style={{ ...s.secondaryBtn, ...(viewMode === "graph" ? { background: "#1e293b", color: "white" } : {}) }}
+            title="Layout SVG a 3 colonne"
+          >
+            ▦ Lineage
+          </button>
+          <button
+            onClick={() => setViewMode((m) => (m === "map" ? "none" : "map"))}
+            style={{ ...s.secondaryBtn, ...(viewMode === "map" ? { background: "#1e293b", color: "white" } : {}) }}
+            title="Mappa concettuale gerarchica (Mermaid)"
+          >
+            🗺 Concept map
           </button>
           <button onClick={download} disabled={!rawContent.data} style={s.primaryBtn}>
             ⬇ Scarica .md
@@ -631,9 +643,18 @@ function DraftViewer({
         </div>
       </div>
 
-      {showLineage && (
+      {viewMode === "graph" && (
         <div style={{ marginBottom: "0.75rem" }}>
           <LineageGraph
+            documentId={draft.document_id}
+            token={token}
+            onSelectChunk={(docId, chunkId) => onSelectSource(docId, chunkId)}
+          />
+        </div>
+      )}
+      {viewMode === "map" && (
+        <div style={{ marginBottom: "0.75rem" }}>
+          <ConceptMap
             documentId={draft.document_id}
             token={token}
             onSelectChunk={(docId, chunkId) => onSelectSource(docId, chunkId)}

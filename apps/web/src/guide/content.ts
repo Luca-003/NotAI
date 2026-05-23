@@ -244,17 +244,24 @@ Il notaio può:
 
 Tutte le azioni sono tracciate in audit (\`provenance.link_confirmed/rejected/removed\`).
 
-### Lineage grafico
+### Lineage grafico (2 visualizzazioni)
 
-Toggle **"vedi lineage grafico"** in DraftViewer apre un SVG a 3 colonne:
+Nel DraftViewer due bottoni:
 
-\`\`\`
-Documenti input -> Chunk -> Sezioni atto
-\`\`\`
+- **▦ Lineage** -> SVG a 3 colonne (documenti input | chunk | sezioni atto).
+  Hover isola i collegamenti, click su un chunk apre il workspace. Layout
+  posizionale, vede subito gli "orfani" (chunk senza link, sezioni senza fonti).
 
-Hover su un nodo isola i suoi collegamenti; click su un chunk lo apre nel
-workspace. Utile per vedere "in colpo d'occhio" se ci sono sezioni senza fonti
-(possibili allucinazioni!) o chunk inutilizzati.
+- **🗺 Concept map** -> diagramma Mermaid stile mappa concettuale, layout
+  automatico left-right. Due modalita':
+  - Compatta: doc input -> sezione atto (1 nodo per documento)
+  - Espansa: doc input -> chunk -> sezione, con label di relation + confidence
+  Click sui chunk verdi per drillare nel workspace.
+
+Entrambe consumano lo stesso endpoint \`/v1/documents/{id}/lineage\` ma con
+viewpoint diverso. Per atti grandi (10+ documenti) la Concept Map e' piu'
+leggibile; per atti piccoli con focus sulla traceability puntuale, il
+lineage SVG.
     `,
   },
   {
