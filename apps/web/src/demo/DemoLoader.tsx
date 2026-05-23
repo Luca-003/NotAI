@@ -1,5 +1,5 @@
-// Bottone "Carica scenari demo": crea 3 pratiche + 3 atti via API REST.
-// Da usare dopo aver fatto login (button "Accedi (dev)" in topbar).
+// Bottone "Carica scenari demo": crea 6 pratiche (3 notarile + 3 legale)
+// con 1 atto ciascuna via API REST. Da usare dopo "Accedi (dev)" in topbar.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -65,8 +65,9 @@ export function DemoLoader({
         <div>
           <h3 style={styles.title}>Carica scenari demo</h3>
           <p style={styles.help}>
-            Crea 3 pratiche di esempio (compravendita prima casa, donazione, costituzione SRL)
-            con parti precompilate. Pronte per avviare il workflow dal notaio.
+            Crea 6 pratiche di esempio (3 notarile: compravendita, donazione,
+            costituzione SRL · 3 legale: citazione, decreto ingiuntivo,
+            separazione consensuale) con parti precompilate.
           </p>
         </div>
         <button

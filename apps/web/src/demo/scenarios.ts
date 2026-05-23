@@ -158,4 +158,137 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
       ],
     },
   },
+  // ---------------------------------------------------------------------
+  // LEGALE - scenari per studio avvocati
+  // ---------------------------------------------------------------------
+  {
+    id: "citazione-recupero-credito",
+    label: "Atto di citazione - recupero credito commerciale",
+    practice: {
+      code: `2026/${Math.floor(Math.random() * 9000 + 1000)}`,
+      kind: "legale.contenzioso.civile",
+      title: "Alfa Srl c. Beta Srl - recupero credito fatture insolute",
+      description:
+        "Atto di citazione davanti al Tribunale di Milano per il recupero di credito commerciale derivante da 6 fatture non saldate per fornitura di servizi IT. Valore: 42.500,00 EUR oltre interessi.",
+    },
+    act: {
+      kind: "legale.citazione",
+      title: "Atto di citazione recupero credito commerciale",
+    },
+    workflow_input: {
+      template_id: "legale.atto_citazione:v1",
+      base_imponibile: 42500,
+      is_prima_casa: false,
+      parties: [
+        {
+          role: "attore",
+          kind: "PG",
+          vat: "12345670156",
+          anagrafica: {
+            denominazione: "Alfa Servizi Srl",
+            sede_legale: "Via Dante 5, 20121 Milano",
+            legale_rappresentante: "Marco Conti",
+          },
+        },
+        {
+          role: "convenuto",
+          kind: "PG",
+          vat: "98765432109",
+          anagrafica: {
+            denominazione: "Beta Commerce Srl",
+            sede_legale: "Corso Italia 88, 20122 Milano",
+            legale_rappresentante: "Anna Galli",
+          },
+        },
+      ],
+    },
+  },
+  {
+    id: "decreto-ingiuntivo-commerciale",
+    label: "Ricorso per decreto ingiuntivo - credito documentato",
+    practice: {
+      code: `2026/${Math.floor(Math.random() * 9000 + 1000)}`,
+      kind: "legale.monitorio",
+      title: "Gamma Srl - ricorso ex art. 633 cpc per fatture commerciali",
+      description:
+        "Ricorso per decreto ingiuntivo ex artt. 633 e ss. cpc. Credito documentato da fatture accettate ed estratto conto certificato. Importo richiesto: 18.750,00 EUR oltre interessi e spese.",
+    },
+    act: {
+      kind: "legale.decreto_ingiuntivo",
+      title: "Ricorso per decreto ingiuntivo",
+    },
+    workflow_input: {
+      template_id: "legale.decreto_ingiuntivo:v1",
+      base_imponibile: 18750,
+      is_prima_casa: false,
+      parties: [
+        {
+          role: "ricorrente",
+          kind: "PG",
+          vat: "11122233344",
+          anagrafica: {
+            denominazione: "Gamma Forniture Srl",
+            sede_legale: "Via Po 14, 10124 Torino",
+            legale_rappresentante: "Carla Marchetti",
+          },
+        },
+        {
+          role: "ingiunto",
+          kind: "PG",
+          vat: "55566677788",
+          anagrafica: {
+            denominazione: "Delta Trade SpA",
+            sede_legale: "Via Verdi 22, 10121 Torino",
+            legale_rappresentante: "Paolo Sanna",
+          },
+        },
+      ],
+    },
+  },
+  {
+    id: "separazione-consensuale",
+    label: "Separazione consensuale - negoziazione assistita (DL 132/2014)",
+    practice: {
+      code: `2026/${Math.floor(Math.random() * 9000 + 1000)}`,
+      kind: "legale.famiglia",
+      title: "Coniugi Greco-Esposito - separazione consensuale",
+      description:
+        "Separazione consensuale tra coniugi senza figli minori, realizzata in regime di negoziazione assistita ex DL 132/2014 conv. L. 162/2014. Accordo su mantenimento e assegnazione casa coniugale.",
+    },
+    act: {
+      kind: "legale.separazione_consensuale",
+      title: "Accordo di separazione consensuale - negoziazione assistita",
+    },
+    workflow_input: {
+      template_id: "legale.separazione_consensuale:v1",
+      base_imponibile: 0,
+      is_prima_casa: false,
+      parties: [
+        {
+          role: "coniuge_1",
+          kind: "PF",
+          fiscal_code: "GRCMRA80A41F205P",
+          anagrafica: {
+            nome: "Maria",
+            cognome: "Greco",
+            data_nascita: "1980-01-01",
+            luogo_nascita: "Napoli (NA)",
+            indirizzo: "Via Roma 5, 80100 Napoli",
+          },
+        },
+        {
+          role: "coniuge_2",
+          kind: "PF",
+          fiscal_code: "SPSGNN78B15F839K",
+          anagrafica: {
+            nome: "Giovanni",
+            cognome: "Esposito",
+            data_nascita: "1978-02-15",
+            luogo_nascita: "Napoli (NA)",
+            indirizzo: "Via Toledo 50, 80132 Napoli",
+          },
+        },
+      ],
+    },
+  },
 ];
