@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch, type Session } from "../auth";
-import { ActDetail } from "../acts/ActDetail";
+import { ActPage } from "../acts/ActPage";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { buildHref, type Tab } from "../routing";
 import { s } from "./PracticesPage";
@@ -54,7 +54,7 @@ export function PracticeDetail({
 
   if (actId) {
     return (
-      <ActDetail
+      <ActPage
         session={session}
         actId={actId}
         practiceTitle={practice.data?.title ?? "Pratica"}

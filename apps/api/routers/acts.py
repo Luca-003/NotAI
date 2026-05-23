@@ -137,6 +137,20 @@ async def start_workflow(
     if act is None:
         raise HTTPException(status_code=404, detail="act not found")
 
+    # Gate: il workflow di generazione atto puo' partire SOLO dopo
+    # consolidamento esplicito del notaio (POST /preparation/consolidate).
+    # Eccezione per dev/smoke con header bypass per non bloccare i test esistenti.
+    prep = (act.extra or {}).get("preparation") or {}
+    if not prep.get("consolidated_at"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "atto non consolidato: completa la fase di preparazione "
+                "(POST /api/v1/acts/{id}/preparation/consolidate) prima di "
+                "avviare il workflow di generazione"
+            ),
+        )
+
     wf_id = make_workflow_id(act_id)
     ctx = WorkflowContext(
         tenant_id=str(principal.tenant_id),

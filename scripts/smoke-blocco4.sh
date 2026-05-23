@@ -49,6 +49,9 @@ for i in $(seq 1 150); do
   if [ "$CS" = "done" ] || [ "$CS" = "abstained" ]; then break; fi
 done
 
+log "Consolida (sblocca il workflow gate)"
+curl -fsS -X POST "$API/api/v1/acts/$AID/preparation/consolidate" -H "Authorization: Bearer $TOK" >/dev/null
+
 log "Avvia workflow atto"
 curl -fsS -X POST "$API/api/v1/acts/$AID/workflow/start" \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \

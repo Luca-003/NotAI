@@ -71,7 +71,8 @@ except: print(99)')
   sleep 4
 done
 
-section "Avvia workflow"
+section "Consolida + Avvia workflow"
+curl -fsS -X POST "$API/api/v1/acts/$ACT_ID/preparation/consolidate" -H "$H" >/dev/null
 curl -fsS -X POST "$API/api/v1/acts/$ACT_ID/workflow/start" -H "$H" -H "Content-Type: application/json" \
   -d '{"template_id":"notarile.compravendita.immobiliare:v1","base_imponibile":285000,"is_prima_casa":true,"parties":[{"role":"venditore","kind":"PF","fiscal_code":"RSSMRA70A01F205X"},{"role":"acquirente","kind":"PF","fiscal_code":"BNCLCA85B05H501Y"}]}' >/dev/null
 

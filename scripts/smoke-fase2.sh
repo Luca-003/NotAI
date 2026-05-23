@@ -42,6 +42,9 @@ ACT=$(curl -fsS -X POST "$API/api/v1/acts" \
 AID=$(echo "$ACT" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
 echo "  act_id=$AID"
 
+log "Consolida (sblocca il workflow gate)"
+curl -fsS -X POST "$API/api/v1/acts/$AID/preparation/consolidate" -H "Authorization: Bearer $TOK" >/dev/null
+
 log "Start workflow"
 START=$(curl -fsS -X POST "$API/api/v1/acts/$AID/workflow/start" \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \

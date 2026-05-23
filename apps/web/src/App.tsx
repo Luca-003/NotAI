@@ -7,6 +7,7 @@ import { ModulesPage } from "./modules/ModulesPage";
 import { PracticesPage } from "./practices/PracticesPage";
 import { WikiPage } from "./wiki/WikiPage";
 import { buildHref, useRoute, type Tab } from "./routing";
+import { WorkspaceTree } from "./workspace/WorkspaceTree";
 
 export function App() {
   const { route, goto } = useRoute();
@@ -47,20 +48,24 @@ export function App() {
 
       {error && <div style={layout.errorBar}>Errore login: {error}</div>}
 
-      <main style={layout.main}>
-        {tab === "dashboard" && <Dashboard session={session} goto={goto} />}
-        {tab === "practices" && (
-          <PracticesPage
-            session={session}
-            onNeedLogin={login}
-            route={route}
-            goto={goto}
-          />
-        )}
-        {tab === "wiki" && <WikiPage session={session} onNeedLogin={login} />}
-        {tab === "modules" && <ModulesPage session={session} onNeedLogin={login} />}
-        {tab === "guide" && <GuidePage />}
-      </main>
+      <div style={layout.body}>
+        {session && <WorkspaceTree session={session} route={route} />}
+
+        <main style={layout.main}>
+          {tab === "dashboard" && <Dashboard session={session} goto={goto} />}
+          {tab === "practices" && (
+            <PracticesPage
+              session={session}
+              onNeedLogin={login}
+              route={route}
+              goto={goto}
+            />
+          )}
+          {tab === "wiki" && <WikiPage session={session} onNeedLogin={login} />}
+          {tab === "modules" && <ModulesPage session={session} onNeedLogin={login} />}
+          {tab === "guide" && <GuidePage />}
+        </main>
+      </div>
 
       <footer style={layout.footer}>
         Build dev — vincolo zero-allucinazione attivo.
@@ -241,7 +246,8 @@ const layout = {
     borderBottom: "1px solid #f87171",
     fontSize: "0.88rem",
   } as React.CSSProperties,
-  main: { padding: "2rem", maxWidth: 1400, margin: "0 auto" } as React.CSSProperties,
+  body: { display: "flex", flex: 1, minHeight: "calc(100vh - 70px)" } as React.CSSProperties,
+  main: { padding: "1.5rem 2rem", flex: 1, overflowX: "auto" } as React.CSSProperties,
   footer: {
     textAlign: "center",
     padding: "1rem",

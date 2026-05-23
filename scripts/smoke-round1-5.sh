@@ -64,7 +64,8 @@ print((s.get("pending") or 0) + (s.get("in_progress") or 0))')
   sleep 2
 done
 
-section "Start workflow"
+section "Consolida + Start workflow"
+curl -fsS -X POST "$API/api/v1/acts/$ACT_ID/preparation/consolidate" -H "$H" >/dev/null
 curl -fsS -X POST "$API/api/v1/acts/$ACT_ID/workflow/start" -H "$H" -H "Content-Type: application/json" \
   -d '{"template_id":"notarile.compravendita.immobiliare:v1","base_imponibile":250000,"is_prima_casa":true,"parties":[{"role":"venditore","kind":"PF","fiscal_code":"RSSMRA70A01F205X"},{"role":"acquirente","kind":"PF","fiscal_code":"BNCLCA85B05H501Y"}]}' >/dev/null
 

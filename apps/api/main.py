@@ -31,7 +31,9 @@ from apps.api.routers import (
     me,
     modules,
     practices,
+    preparation,
     templates as templates_router,
+    workspace,
 )
 from notai.config import get_settings
 
@@ -94,6 +96,8 @@ def create_app() -> FastAPI:
     app.include_router(modules.router, prefix="/api/v1")
     app.include_router(templates_router.router, prefix="/api/v1")
     app.include_router(examples_router.router, prefix="/api/v1")
+    app.include_router(workspace.router, prefix="/api/v1")
+    app.include_router(preparation.router, prefix="/api/v1")
     if settings.env == "dev":
         app.include_router(dev.router, prefix="/api/v1")
 

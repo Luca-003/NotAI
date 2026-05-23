@@ -68,6 +68,9 @@ log "Riattivo workflow e ritento start - deve passare"
 curl -fsS -X PUT "$API/api/v1/modules/notaio.workflow" \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
   -d '{"enabled":true}' >/dev/null
+# Consolidate the act so the new preparation gate doesn't block.
+curl -fsS -X POST "$API/api/v1/acts/$AID/preparation/consolidate" \
+  -H "Authorization: Bearer $TOK" >/dev/null
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   -X POST "$API/api/v1/acts/$AID/workflow/start" \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
