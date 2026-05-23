@@ -287,6 +287,80 @@ async def list_documents_of_act(
     return [DocumentRead.model_validate(d) for d in rows.scalars().all()]
 
 
+@router.get("/{act_id}/tags")
+async def get_act_tags(
+    act_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> dict:
+    """Aggregato dei tag (suggested_tags + document_type + entity types) sui
+    chunk dell'atto. Ritorna facet per il workspace UI.
+
+    Output:
+      {
+        "tags": [{name, count}, ...],
+        "document_types": [{name, count, chunks: [ids...]}, ...],
+        "entity_types": [{name, count}, ...]
+      }
+    """
+    del principal
+    from notai.contexts.documents.models import DocumentChunk
+
+    if (await ActRepository(session).get(act_id)) is None:
+        raise HTTPException(status_code=404, detail="act not found")
+
+    chunks = (
+        await session.execute(
+            select(DocumentChunk)
+            .join(Document, DocumentChunk.document_id == Document.id)
+            .where(
+                Document.act_id == act_id,
+                not_deleted(Document),
+                DocumentChunk.classification_status == "done",
+            )
+        )
+    ).scalars().all()
+
+    tag_counts: dict[str, int] = {}
+    doc_type_counts: dict[str, list[str]] = {}  # doc_type -> list of chunk_ids
+    entity_type_counts: dict[str, int] = {}
+
+    for c in chunks:
+        cls = c.classification or {}
+        for t in (cls.get("suggested_tags") or []):
+            if isinstance(t, str) and t:
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+        dt = cls.get("document_type")
+        if dt and dt != "indeterminato":
+            doc_type_counts.setdefault(dt, []).append(str(c.id))
+        for e in (cls.get("entities") or []):
+            et = e.get("type") if isinstance(e, dict) else None
+            if et:
+                entity_type_counts[et] = entity_type_counts.get(et, 0) + 1
+
+    tags_out = sorted(
+        [{"name": k, "count": v} for k, v in tag_counts.items()],
+        key=lambda x: (-x["count"], x["name"]),
+    )
+    doc_types_out = sorted(
+        [
+            {"name": k, "count": len(v), "chunks": v}
+            for k, v in doc_type_counts.items()
+        ],
+        key=lambda x: (-x["count"], x["name"]),
+    )
+    entity_types_out = sorted(
+        [{"name": k, "count": v} for k, v in entity_type_counts.items()],
+        key=lambda x: (-x["count"], x["name"]),
+    )
+
+    return {
+        "act_id": str(act_id),
+        "tags": tags_out,
+        "document_types": doc_types_out,
+        "entity_types": entity_types_out,
+        "chunks_analyzed": len(chunks),
+    }
+
+
 def _make_snippet(text: str, lower_needle: str, needle_len: int) -> str:
     """Estrae ~160 char attorno al needle (case-insensitive), con ellipsi."""
     if not text:

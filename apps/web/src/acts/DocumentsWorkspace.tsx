@@ -12,6 +12,7 @@ import { card } from "../theme";
 import { KIND_INPUT_SOURCE, isInputKind } from "./kinds";
 import { truncate } from "../text";
 import { pollWhile } from "../hooks/polling";
+import { NO_FILTER, TagFacetPanel, type FacetFilter } from "./TagFacetPanel";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
@@ -89,6 +90,7 @@ export function DocumentsWorkspace({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [highlightChunkId, setHighlightChunkId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [facetFilter, setFacetFilter] = useState<FacetFilter>(NO_FILTER);
 
   // Quando arriva una selectedSource dal DraftViewer, apri il documento sorgente,
   // segna il chunk da evidenziare, poi "consuma" il comando avvisando il parent.
@@ -168,6 +170,13 @@ export function DocumentsWorkspace({
 
       <ActSearchBar actId={actId} session={session} onJumpToChunk={(docId, chunkId) => { setSelectedId(docId); setHighlightChunkId(chunkId); }} query={searchQuery} setQuery={setSearchQuery} />
 
+      <TagFacetPanel
+        actId={actId}
+        session={session}
+        filter={facetFilter}
+        setFilter={setFacetFilter}
+      />
+
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -225,6 +234,7 @@ export function DocumentsWorkspace({
           documentId={selectedId}
           session={session}
           highlightChunkId={highlightChunkId}
+          facetFilter={facetFilter}
           onClose={() => {
             setSelectedId(null);
             setHighlightChunkId(null);
@@ -576,11 +586,13 @@ function DocumentPreview({
   documentId,
   session,
   highlightChunkId,
+  facetFilter,
   onClose,
 }: {
   documentId: string;
   session: Session;
   highlightChunkId?: string | null;
+  facetFilter?: FacetFilter;
   onClose: () => void;
 }) {
   const url = `${API_BASE}/v1/documents/${documentId}/content`;
@@ -630,6 +642,7 @@ function DocumentPreview({
             documentId={documentId}
             session={session}
             highlightChunkId={highlightChunkId ?? null}
+            facetFilter={facetFilter}
           />
         </div>
       )}
@@ -641,10 +654,12 @@ function ChunksList({
   documentId,
   session,
   highlightChunkId,
+  facetFilter,
 }: {
   documentId: string;
   session: Session;
   highlightChunkId: string | null;
+  facetFilter?: FacetFilter;
 }) {
   const chunks = useQuery({
     queryKey: ["chunks", documentId],
@@ -652,6 +667,23 @@ function ChunksList({
       apiFetch<Chunk[]>(`/v1/documents/${documentId}/chunks`, {}, session.token),
     refetchInterval: pollWhile<Chunk[]>((data) => !data || data.length === 0, 3_000),
   });
+
+  // Filtro client-side per facet (document_type / tag) - manteniamo i chunk
+  // visibili che matchano il filtro; gli altri vengono nascosti ma il
+  // chunk evidenziato (highlightChunkId) e' sempre visibile.
+  const filteredChunks = (chunks.data ?? []).filter((c) => {
+    if (highlightChunkId === c.id) return true;
+    const cls = c.classification ?? {};
+    if (facetFilter?.document_type && cls?.document_type !== facetFilter.document_type) {
+      return false;
+    }
+    if (facetFilter?.tag) {
+      const tags = cls?.suggested_tags ?? [];
+      if (!Array.isArray(tags) || !tags.includes(facetFilter.tag)) return false;
+    }
+    return true;
+  });
+  const hidden = (chunks.data ?? []).length - filteredChunks.length;
 
   // Una sola query per tutto il documento al posto di N (una per chunk).
   // Solo i chunk con count > 0 attivano il rendering del badge.
@@ -680,10 +712,15 @@ function ChunksList({
   return (
     <details style={{ marginTop: "1rem" }} open>
       <summary style={{ cursor: "pointer", fontWeight: 600, color: "#475569" }}>
-        Chunks estratti ({chunks.data.length}) — il sistema li usera' per generare l'atto
+        Chunks estratti ({filteredChunks.length}{hidden > 0 ? ` di ${chunks.data.length}` : ""}) — il sistema li usera' per generare l'atto
+        {hidden > 0 && (
+          <span style={{ marginLeft: "0.5rem", fontSize: "0.78rem", color: "#92400e", fontStyle: "italic" }}>
+            ({hidden} nascosti dal filtro facet)
+          </span>
+        )}
       </summary>
       <ol style={{ paddingLeft: "1.5rem", marginTop: "0.5rem" }}>
-        {chunks.data.map((c) => (
+        {filteredChunks.map((c) => (
           <li
             key={c.id}
             id={`chunk-${c.id}`}

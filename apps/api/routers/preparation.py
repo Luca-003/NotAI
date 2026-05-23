@@ -142,6 +142,9 @@ async def get_preparation_status(
     # vedra' i chunk che ci sono).
     can_execute = consolidated and not act.workflow_run_id
 
+    # Preview slot extraction (se gia' calcolato via /extract-preview)
+    preview = extra.get("preview_slots")
+
     return {
         "act_id": str(act_id),
         "template_id": template_id,
@@ -168,6 +171,7 @@ async def get_preparation_status(
             "consolidated": consolidated,
             "consolidated_at": consolidated_at,
         },
+        "preview_slots": preview,  # null se /extract-preview non ancora chiamato
         "can_execute": can_execute,
         "workflow_run_id": act.workflow_run_id,
     }
@@ -322,6 +326,92 @@ async def acquire_visure(
         "filename": filename,
         "adapter": payload.adapter,
         "ingestion_status": "pending",
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST extract-preview
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{act_id}/preparation/extract-preview")
+async def extract_preview(
+    act_id: uuid.UUID, principal: TenantDep, session: DbDep
+) -> dict:
+    """Esegue lo slot extractor LLM SUBITO (fuori dal workflow Temporal) e
+    salva il risultato su act.extra.preview_slots per anteprima nella UI.
+
+    Idempotente: ri-eseguibile, sovrascrive il preview precedente.
+    Quando il workflow Temporal parte, lo slot_extract gira di nuovo dentro
+    (per la durable history). I due risultati dovrebbero coincidere, ma il
+    workflow e' la fonte autoritativa.
+    """
+    from notai.contexts.drafting.registry import get_template
+    from notai.contexts.drafting.slot_extractor import extract_slots
+
+    act = await ActRepository(session).get(act_id)
+    if act is None:
+        raise HTTPException(status_code=404, detail="act not found")
+
+    template_id = act.kind + ":v1"
+    tpl = get_template(template_id)
+    if tpl is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"template '{template_id}' non trovato nel registry",
+        )
+
+    extraction = await extract_slots(
+        act_id=act_id,
+        tenant_id=principal.tenant_id,
+        template_id=template_id,
+        slot_schema=tpl.slot_schema,
+    )
+
+    slots: dict[str, object] = {}
+    provenance: dict[str, dict] = {}
+    abstained: list[str] = []
+    for s in extraction.slots:
+        if s.abstain:
+            abstained.append(s.name)
+            continue
+        slots[s.name] = s.value
+        provenance[s.name] = {
+            "chunk_id": s.source_chunk_id,
+            "char_start": s.source_char_start,
+            "char_end": s.source_char_end,
+            "confidence": s.confidence,
+        }
+
+    extra = dict(act.extra or {})
+    extra["preview_slots"] = {
+        "slots": slots,
+        "provenance": provenance,
+        "abstained": abstained,
+        "extracted_at": datetime.now(timezone.utc).isoformat(),
+        "template_id": template_id,
+    }
+    act.extra = extra
+
+    await audit_logger.append(
+        session=session,
+        tenant_id=principal.tenant_id,
+        stream_id=stream_for_act(act_id),
+        type="preparation.slots_previewed",
+        payload={
+            "template_id": template_id,
+            "slots_extracted": list(slots.keys()),
+            "slots_abstained": abstained,
+        },
+        actor=principal.as_actor(),
+    )
+
+    return {
+        "act_id": str(act_id),
+        "template_id": template_id,
+        "slots": slots,
+        "provenance": provenance,
+        "abstained": abstained,
     }
 
 

@@ -1,15 +1,31 @@
 // ActPreparation: vista dell'atto PRIMA del workflow Temporal.
-// Articola in 4 step espliciti la fase di consolidamento documenti:
+// Articola in step espliciti la fase di consolidamento documenti:
 //   1. Catalogo  (automatico: ingestion + classify)
 //   2. Visure needed (cosa il template chiede e non e' presente)
 //   3. Visure acquisite (mock adapter -> Document)
-//   4. Consolida (notaio approva, sblocca workflow)
+//   4. Anteprima slot estratti (LLM extract preview)
+//   5. Consolida (notaio approva, sblocca workflow)
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch, type Session } from "../auth";
 import { DocumentsWorkspace } from "./DocumentsWorkspace";
 import { pollWhile } from "../hooks/polling";
+
+type SlotProvenance = {
+  chunk_id: string | null;
+  char_start: number | null;
+  char_end: number | null;
+  confidence: number;
+};
+
+type PreviewSlots = {
+  slots: Record<string, string | number | boolean | null>;
+  provenance: Record<string, SlotProvenance>;
+  abstained: string[];
+  extracted_at: string;
+  template_id: string;
+};
 
 type PrepStatus = {
   act_id: string;
@@ -37,6 +53,7 @@ type PrepStatus = {
     consolidated: boolean;
     consolidated_at: string | null;
   };
+  preview_slots: PreviewSlots | null;
   can_execute: boolean;
   workflow_run_id: string | null;
 };
@@ -76,6 +93,40 @@ export function ActPreparation({
       qc.invalidateQueries({ queryKey: ["preparation", actId] });
     },
   });
+
+  const extractPreview = useMutation({
+    mutationFn: () =>
+      apiFetch<{ slots: Record<string, unknown>; abstained: string[] }>(
+        `/v1/acts/${actId}/preparation/extract-preview`,
+        { method: "POST" },
+        session.token,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["preparation", actId] });
+    },
+  });
+
+  // Auto-trigger preview quando il catalog e' ready e non c'e' ancora preview.
+  // Eseguito una sola volta per ingresso pagina (mutate non scatena loop).
+  const catalogReady = prep.data?.step1_catalog.status === "ready";
+  const hasPreview = !!prep.data?.preview_slots;
+  const allVisureClassified = prep.data?.step3_visure_acquired.items.every(
+    (i) => i.ingestion_status === "done",
+  ) ?? true;
+  const consolidatedAlready = prep.data?.step4_consolidation.consolidated ?? false;
+  useEffect(() => {
+    if (
+      catalogReady &&
+      !hasPreview &&
+      allVisureClassified &&
+      !consolidatedAlready &&
+      !extractPreview.isPending
+    ) {
+      extractPreview.mutate();
+    }
+    // intenzionale: vogliamo trigger UNA volta, quando catalogReady passa a true.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogReady, hasPreview, allVisureClassified, consolidatedAlready]);
 
   if (prep.isLoading) return <div style={{ padding: "1rem" }}>Carico stato...</div>;
   if (prep.isError) {
@@ -186,8 +237,17 @@ export function ActPreparation({
         }
       />
 
-      <StepCard
+      <SlotPreviewCard
         n={4}
+        preview={s.preview_slots}
+        loading={extractPreview.isPending}
+        error={extractPreview.error ? String(extractPreview.error) : null}
+        onRefresh={() => extractPreview.mutate()}
+        catalogReady={step1Done}
+      />
+
+      <StepCard
+        n={5}
         title="Consolida e procedi"
         state={s.step4_consolidation.consolidated ? "done" : "todo"}
         body={
@@ -268,6 +328,170 @@ export function ActPreparation({
     </div>
   );
 }
+
+function SlotPreviewCard({
+  n,
+  preview,
+  loading,
+  error,
+  onRefresh,
+  catalogReady,
+}: {
+  n: number;
+  preview: PreviewSlots | null;
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  catalogReady: boolean;
+}) {
+  const state = !catalogReady
+    ? "todo"
+    : loading
+    ? "in_progress"
+    : preview && Object.keys(preview.slots).length > 0
+    ? "done"
+    : "todo";
+
+  return (
+    <StepCard
+      n={n}
+      title="Anteprima dati estratti dai documenti"
+      state={state}
+      body={
+        <>
+          <p style={{ margin: "0 0 0.6rem", color: "#475569", fontSize: "0.9rem" }}>
+            NotAI legge i documenti classificati e ricava i valori del template
+            (indirizzo immobile, foglio, particella, prezzo, provenienza, ...).
+            Ogni valore e' <strong>grounded</strong> su un chunk specifico,
+            altrimenti il sistema si astiene (zero-allucinazione).
+          </p>
+          {!catalogReady && (
+            <p style={{ margin: 0, color: "#92400e", fontSize: "0.85rem" }}>
+              Attendi che il catalogo automatico (step 1) sia completo.
+            </p>
+          )}
+          {catalogReady && loading && (
+            <p style={{ margin: 0, color: "#1e3a8a", fontSize: "0.88rem" }}>
+              Estraggo dai documenti via LLM locale... (~30-90s)
+            </p>
+          )}
+          {error && (
+            <div style={{ color: "#b91c1c", fontSize: "0.85rem", marginBottom: "0.5rem" }}>
+              {error}
+            </div>
+          )}
+          {preview && (
+            <>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.86rem", marginTop: "0.4rem" }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...thStyle, width: "30%" }}>Slot</th>
+                    <th style={thStyle}>Valore estratto</th>
+                    <th style={{ ...thStyle, width: 80 }}>Conf</th>
+                    <th style={{ ...thStyle, width: 140 }}>Sorgente</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(preview.slots).map(([name, value]) => {
+                    const prov = preview.provenance[name];
+                    return (
+                      <tr key={name}>
+                        <td style={tdStyle}><code style={codeStyle}>{name}</code></td>
+                        <td style={tdStyle}><strong>{formatVal(value)}</strong></td>
+                        <td style={tdStyle}>{prov ? `${(prov.confidence * 100).toFixed(0)}%` : "—"}</td>
+                        <td style={tdStyle}>
+                          {prov?.chunk_id ? (
+                            <code style={{ ...codeStyle, fontSize: "0.7rem" }} title={`chunk ${prov.chunk_id}`}>
+                              {prov.chunk_id.slice(0, 8)}…
+                            </code>
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {preview.abstained.map((name) => (
+                    <tr key={name} style={{ background: "#fef2f2" }}>
+                      <td style={tdStyle}><code style={codeStyle}>{name}</code></td>
+                      <td style={{ ...tdStyle, color: "#b91c1c", fontStyle: "italic" }}>
+                        astenuto (non groundable)
+                      </td>
+                      <td style={tdStyle} colSpan={2}>—</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: "#64748b" }}>
+                Estratto il {new Date(preview.extracted_at).toLocaleString("it-IT")}.{" "}
+                <button
+                  onClick={onRefresh}
+                  disabled={loading}
+                  style={{
+                    padding: "0.2rem 0.6rem",
+                    background: "white",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: 3,
+                    cursor: loading ? "wait" : "pointer",
+                    fontSize: "0.78rem",
+                    marginLeft: "0.4rem",
+                  }}
+                >
+                  ↻ Ri-estrai
+                </button>
+              </div>
+            </>
+          )}
+          {catalogReady && !preview && !loading && !error && (
+            <button
+              onClick={onRefresh}
+              style={{
+                marginTop: "0.5rem",
+                padding: "0.5rem 1rem",
+                background: "#1e293b",
+                color: "white",
+                border: "none",
+                borderRadius: 4,
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              Estrai slot dai documenti
+            </button>
+          )}
+        </>
+      }
+    />
+  );
+}
+
+function formatVal(v: string | number | boolean | null | undefined): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "number") return v.toLocaleString("it-IT");
+  if (typeof v === "boolean") return v ? "si" : "no";
+  return String(v);
+}
+
+const thStyle: React.CSSProperties = {
+  textAlign: "left",
+  padding: "0.35rem 0.4rem",
+  borderBottom: "1px solid #cbd5e1",
+  fontSize: "0.78rem",
+  color: "#64748b",
+  textTransform: "uppercase",
+  letterSpacing: 0.4,
+};
+const tdStyle: React.CSSProperties = {
+  padding: "0.35rem 0.4rem",
+  borderBottom: "1px solid #e2e8f0",
+  verticalAlign: "top",
+};
+const codeStyle: React.CSSProperties = {
+  background: "#f1f5f9",
+  padding: "0.05rem 0.35rem",
+  borderRadius: 3,
+  fontFamily: "ui-monospace, Menlo, monospace",
+  fontSize: "0.78rem",
+};
+
 
 function AcquireVisureBlock({
   actId,
