@@ -78,6 +78,23 @@ class VisuraResult:
 
 
 @dataclass
+class SlotExtractRequest:
+    ctx: WorkflowContext
+    template_id: str          # template da cui leggere slot_schema
+
+
+@dataclass
+class SlotExtractResult:
+    """Output dell'estrazione slot. `slots` chiave->valore per il render,
+    `provenance` chiave->{chunk_id, char_start, char_end, confidence} per
+    la value-level provenance UI.
+    """
+    slots: dict                  # nome_slot -> value (None se abstain)
+    provenance: dict             # nome_slot -> {chunk_id, char_start, char_end, confidence}
+    abstained: list[str]         # nomi degli slot per cui l'estrattore si e' astenuto
+
+
+@dataclass
 class DraftRequest:
     ctx: WorkflowContext
     template_id: str          # es. "notarile.compravendita.immobiliare:v1"

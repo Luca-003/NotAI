@@ -119,6 +119,53 @@ def _safe_slots(slots: dict[str, Any]) -> dict[str, Any]:
         )
         or "_(nessuna visura)_"
     )
+
+    # Numerici opzionali: rendita catastale (EUR)
+    rc = slots.get("immobile_rendita")
+    base["immobile_rendita_fmt"] = (
+        f"{float(rc):,.2f}".replace(",", ".") if rc not in (None, "", "—") else "—"
+    )
+
+    # Prezzo in lettere (semplice). In Fase 5 conversione completa via libreria.
+    base["base_imponibile_lettere"] = "(prezzo da scrivere in lettere)"
+
+    # Blocco prima casa
+    base["prima_casa_block"] = (
+        (
+            "L'acquirente, ai sensi della nota II-bis dell'art. 1 Tariffa parte I "
+            "DPR 131/86, **DICHIARA** di voler usufruire delle agevolazioni "
+            "'prima casa': impegno a trasferire la residenza nel Comune entro 18 "
+            "mesi; non titolarita' di altra abitazione nello stesso Comune ne' "
+            "di altra prima casa nel territorio nazionale."
+        )
+        if slots.get("is_prima_casa")
+        else "Acquisto a regime ordinario (no agevolazione prima casa)."
+    )
+
+    # Data di oggi spezzata in giorno/mese/anno italiano (per intestazione atto)
+    from datetime import datetime as _dt
+    _now = _dt.now()
+    _mesi = [
+        "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+        "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre",
+    ]
+    base["today_giorno"] = str(_now.day)
+    base["today_mese"] = _mesi[_now.month - 1]
+    base["today_anno"] = str(_now.year)
+    base.setdefault("luogo_stipula_o_default", "(luogo della stipula)")
+
+    # Sommario slot estratti vs astenuti (note_tecniche)
+    extracted_slots = slots.get("_extracted_slot_names") or []
+    abstained_slots = slots.get("_abstained_slot_names") or []
+    summary_lines = []
+    if extracted_slots:
+        summary_lines.append(f"  - estratti dai documenti: {', '.join(extracted_slots)}")
+    if abstained_slots:
+        summary_lines.append(f"  - non estratti (da completare a mano): {', '.join(abstained_slots)}")
+    if not summary_lines:
+        summary_lines.append("  - (nessuno slot estratto da documenti)")
+    base["slots_summary_md"] = "\n".join(summary_lines)
+
     return base
 
 

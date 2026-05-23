@@ -215,6 +215,9 @@ async def get_workflow_status(
         "state": {
             "status": state.status,
             "visure": state.visure,
+            "extracted_slots": state.extracted_slots,
+            "extracted_provenance": state.extracted_provenance,
+            "extracted_abstained": state.extracted_abstained,
             "draft": state.draft,
             "tax": state.tax,
             "review": state.review,

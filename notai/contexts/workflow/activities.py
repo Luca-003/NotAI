@@ -30,6 +30,8 @@ from .common import (
     DraftResult,
     HumanReviewRequest,
     HumanReviewResponse,
+    SlotExtractRequest,
+    SlotExtractResult,
     TaxCalculationRequest,
     TaxCalculationResult,
     VisuraRequest,
@@ -168,6 +170,70 @@ def _sections_to_markdown(sections: list[dict]) -> str:
     for s in sections:
         blocks.append(f"## {s['title']}\n\n{s['text']}")
     return "\n\n---\n\n".join(blocks)
+
+
+@activity.defn(name="slot.extract")
+async def slot_extract(req: SlotExtractRequest) -> SlotExtractResult:
+    """Estrae i valori dei slot del template dai chunk classificati di input.
+
+    Pre-condizione: i documenti di input sono stati ingeriti e classificati
+    (classify_document_chunks). Se non ci sono chunks, ritorna risultato
+    vuoto - il draft_generate fallback sui valori del form.
+
+    L'estrattore LLM ha vincolo zero-allucinazione: ogni slot value e'
+    grounded su un chunk specifico, altrimenti abstain=true sullo slot.
+    """
+    from notai.contexts.drafting.registry import get_template
+    from notai.contexts.drafting.slot_extractor import extract_slots
+
+    activity.heartbeat("loading template + chunks")
+    tpl = get_template(req.template_id)
+    if tpl is None:
+        logger.warning("notai.slot.template_not_found", template_id=req.template_id)
+        return SlotExtractResult(slots={}, provenance={}, abstained=[])
+
+    tenant_uuid = uuid.UUID(req.ctx.tenant_id)
+    act_uuid = uuid.UUID(req.ctx.act_id)
+
+    extraction = await extract_slots(
+        act_id=act_uuid,
+        tenant_id=tenant_uuid,
+        template_id=req.template_id,
+        slot_schema=tpl.slot_schema,
+    )
+
+    slots: dict[str, object] = {}
+    provenance: dict[str, dict] = {}
+    abstained: list[str] = []
+    for s in extraction.slots:
+        if s.abstain:
+            abstained.append(s.name)
+            continue
+        slots[s.name] = s.value
+        provenance[s.name] = {
+            "chunk_id": s.source_chunk_id,
+            "char_start": s.source_char_start,
+            "char_end": s.source_char_end,
+            "confidence": s.confidence,
+        }
+
+    await _audit(
+        req.ctx,
+        event_type="slots.extracted",
+        payload={
+            "template_id": req.template_id,
+            "slots_extracted": list(slots.keys()),
+            "slots_abstained": abstained,
+        },
+    )
+
+    logger.info(
+        "notai.activity.slot.extract",
+        act_id=str(act_uuid),
+        extracted=len(slots),
+        abstained=len(abstained),
+    )
+    return SlotExtractResult(slots=slots, provenance=provenance, abstained=abstained)
 
 
 @activity.defn(name="draft.generate")
@@ -425,6 +491,7 @@ async def human_review_completed(
 ALL_ACTIVITIES = [
     visura_telemaco,
     visura_anpr,
+    slot_extract,
     draft_generate,
     tax_calculate,
     human_review_requested,

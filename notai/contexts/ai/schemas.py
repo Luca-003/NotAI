@@ -119,11 +119,52 @@ class ChunkClassification(StructuredAIOutput):
     )
 
 
+class SlotValue(BaseModel):
+    """Un singolo slot estratto dai documenti dell'atto.
+
+    Lo slot ha sempre un nome (es. "immobile_foglio") concordato col template.
+    `value` puo' essere stringa o numero a seconda dello slot.
+    `source_chunk_id` e' obbligatorio quando abstain=false: niente valore
+    senza grounding (vincolo zero-allucinazione).
+    """
+
+    name: str = Field(..., description="nome dello slot nel template (es. immobile_foglio)")
+    value: str | float | int | bool | None = Field(
+        None, description="valore estratto letteralmente dal chunk sorgente"
+    )
+    source_chunk_id: str | None = Field(
+        None, description="UUID del chunk da cui il valore proviene"
+    )
+    source_char_start: int | None = Field(
+        None, description="offset di inizio del match nel testo del chunk"
+    )
+    source_char_end: int | None = Field(
+        None, description="offset di fine del match nel testo del chunk"
+    )
+    confidence: float = Field(0.0, ge=0, le=1)
+    abstain: bool = False
+    abstain_reason: str | None = None
+
+
+class SlotExtraction(StructuredAIOutput):
+    """Output del LLM extractor per un singolo atto: una lista di SlotValue.
+
+    Il template del workflow definisce quali slot estrarre (slot_schema).
+    L'extractor LLM riempie ogni slot leggendo i chunk classificati dei
+    documenti di input dell'atto. Ogni valore DEVE essere grounded su un
+    chunk specifico, altrimenti abstain=true sullo slot.
+    """
+
+    slots: list[SlotValue] = Field(default_factory=list)
+
+
 __all__ = [
     "ChunkClassification",
     "ClauseClassification",
     "DraftSuggestion",
     "ExtractedEntity",
+    "SlotExtraction",
+    "SlotValue",
     "SourceRef",
     "StructuredAIOutput",
 ]

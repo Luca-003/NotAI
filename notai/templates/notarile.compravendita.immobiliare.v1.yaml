@@ -1,7 +1,6 @@
 # Template atto: compravendita immobiliare (notarile)
 # Caricato a startup dal registry in notai/contexts/drafting/registry.py
-# Modificabile senza redeploy: basta toccare questo file e chiamare
-# POST /api/v1/templates/reload (TODO endpoint admin)
+# Modificabile senza redeploy: tocca il file + POST /api/v1/templates/reload
 
 id: "notarile.compravendita.immobiliare:v1"
 name: "Compravendita immobiliare (prima casa o ordinaria)"
@@ -14,96 +13,180 @@ requires_modules:
   - "notaio.workflow"
   - "notaio.tax_calculator"
 tags: ["compravendita", "immobile", "prima_casa"]
+
+# Slot schema: ogni slot puo' essere estratto da specifici document_type.
+# `extract_from` e' una hint per l'estrattore LLM (precedenza per quei doc).
+# `required: true` -> abstain blocca il workflow (UI chiede al notaio).
+# `from_form` -> il valore puo' venire dal form di avvio workflow se non estratto.
 slot_schema:
   parties:
     type: "array"
     required: true
     roles: ["venditore", "acquirente"]
+    from_form: true
   base_imponibile:
     type: "number"
     required: true
+    from_form: true
+    extract_from: ["proposta_acquisto", "contratto_preliminare"]
+    hint: "prezzo dichiarato in atto (EUR)"
   is_prima_casa:
     type: "boolean"
     required: true
+    from_form: true
+  immobile_indirizzo:
+    type: "string"
+    extract_from: ["visura_catastale"]
+    hint: "indirizzo completo dell'immobile (via, civico, comune, CAP)"
+  immobile_foglio:
+    type: "string"
+    extract_from: ["visura_catastale"]
+    hint: "numero foglio catastale"
+  immobile_particella:
+    type: "string"
+    extract_from: ["visura_catastale"]
+  immobile_subalterno:
+    type: "string"
+    extract_from: ["visura_catastale"]
+  immobile_categoria:
+    type: "string"
+    extract_from: ["visura_catastale"]
+    hint: "categoria catastale es. A/2"
+  immobile_rendita:
+    type: "number"
+    extract_from: ["visura_catastale"]
+    hint: "rendita catastale in EUR"
+  provenienza_titolo:
+    type: "string"
+    extract_from: ["visura_ipocatastale", "atto_provenienza"]
+    hint: "atto/successione/donazione precedente che ha trasferito la proprieta' al venditore attuale"
+  provenienza_data:
+    type: "string"
+    extract_from: ["visura_ipocatastale", "atto_provenienza"]
+    hint: "data del titolo di provenienza"
+  provenienza_trascrizione:
+    type: "string"
+    extract_from: ["visura_ipocatastale"]
+    hint: "estremi della trascrizione precedente (numero/anno)"
+
 workflow_skip_steps: []
 
+# Sezioni del documento prodotto. Ogni `{placeholder}` viene sostituito da:
+#   - slot estratti dai documenti (priorita' alta)
+#   - slot dal form (fallback)
+#   - "—" se mancante (UI evidenzia in giallo)
+# `relies_on` elenca i TIPI di entita' attesi: serve sia al provenance graph
+# euristico (link sezione->chunk) sia all'estrattore (filtro relevance).
 sections:
   - id: "header"
     title: "Intestazione"
     relies_on: []
     text: |
-      **Bozza atto** — `{template_id}`
+      **REPUBBLICA ITALIANA**
 
-      Stato: bozza in attesa di review del notaio.
+      L'anno {today_anno}, il giorno {today_giorno} del mese di {today_mese},
+
+      in {luogo_stipula_o_default},
+
+      davanti a me, **Notaio rogante**, iscritto al Collegio Notarile competente,
+
+      sono comparsi:
 
   - id: "parties"
     title: "Parti"
-    relies_on: ["person_name", "fiscal_code", "company_name", "vat_number"]
+    relies_on: ["person_name", "fiscal_code"]
     text: |
       {parties_md}
 
-  - id: "visure"
-    title: "Visure pre-atto"
+  - id: "premesse"
+    title: "Premesso che"
+    relies_on: ["immobile_cadastral", "amount", "address"]
+    text: |
+      a) il venditore e' titolare in piena proprieta' (1000/1000) dell'unita'
+         immobiliare oggetto del presente atto;
+
+      b) l'immobile e' sito in **{immobile_indirizzo}**, identificato al
+         Nuovo Catasto Edilizio Urbano del Comune al
+         **foglio {immobile_foglio}, particella {immobile_particella},
+         subalterno {immobile_subalterno}**, categoria catastale
+         **{immobile_categoria}**, rendita catastale EUR **{immobile_rendita_fmt}**;
+
+      c) il titolo di provenienza dell'immobile in capo al venditore e':
+         **{provenienza_titolo}** del **{provenienza_data}**, trascritto agli
+         estremi **{provenienza_trascrizione}**;
+
+      d) il corrispettivo pattuito tra le parti per il trasferimento e' di
+         EUR **{base_imponibile_fmt}**.
+
+  - id: "art_1_oggetto"
+    title: "Articolo 1 — Oggetto del trasferimento"
+    relies_on: ["immobile_cadastral", "address"]
+    text: |
+      Il venditore trasferisce e cede in piena proprieta' all'acquirente, che
+      accetta ed acquista, l'unita' immobiliare meglio descritta in premessa,
+      sita in {immobile_indirizzo}, identificata al N.C.E.U. al foglio
+      {immobile_foglio}, particella {immobile_particella}, subalterno
+      {immobile_subalterno}.
+
+  - id: "art_2_prezzo"
+    title: "Articolo 2 — Prezzo"
+    relies_on: ["amount"]
+    text: |
+      Il prezzo della presente compravendita e' di EUR **{base_imponibile_fmt}**
+      (in lettere: {base_imponibile_lettere}/00).
+
+      Il pagamento avviene a cura dell'acquirente, in conformita' all'art. 35
+      comma 22 del DL 4/7/2006 n. 223 (tracciabilita' dei pagamenti immobiliari),
+      mediante bonifico bancario tracciato. Le parti dichiarano di aver letto e
+      compreso le conseguenze di legge in caso di dichiarazioni mendaci.
+
+  - id: "art_3_garanzie"
+    title: "Articolo 3 — Garanzie e dichiarazioni del venditore"
+    relies_on: ["immobile_cadastral"]
+    text: |
+      Il venditore garantisce all'acquirente, ai sensi degli artt. 1476 e 1490
+      c.c., la piena proprieta' dell'immobile, libero da ipoteche, pignoramenti,
+      sequestri, trascrizioni pregiudizievoli ed iscrizioni di alcun genere,
+      salvo quanto eventualmente risultante dalle ispezioni ipo-catastali
+      compiute dal notaio.
+
+      Il venditore si obbliga ad assistere ad ogni eventuale evizione totale o
+      parziale ai sensi degli artt. 1483-1488 c.c.
+
+  - id: "art_4_prima_casa"
+    title: "Articolo 4 — Agevolazioni prima casa"
+    relies_on: []
+    text: |
+      {prima_casa_block}
+
+  - id: "art_5_trascrizione"
+    title: "Articolo 5 — Trascrizione"
+    relies_on: []
+    text: |
+      Il presente atto sara' trascritto nei pubblici registri immobiliari, a
+      cura del notaio rogante, ai sensi dell'art. 2643 c.c. entro i termini di
+      legge.
+
+  - id: "art_6_imposte"
+    title: "Articolo 6 — Imposte"
+    relies_on: ["amount"]
+    text: |
+      Le imposte di registro, ipotecaria e catastale sono determinate ai sensi
+      del DPR 131/1986 e del DLgs 347/1990 (vedi prospetto di calcolo allegato).
+
+  - id: "visure_acquisite"
+    title: "Visure pre-atto acquisite"
     relies_on: ["address", "immobile_cadastral"]
     text: |
       {visure_md}
 
-  - id: "premesse"
-    title: "Premesso che"
-    relies_on: ["amount", "person_name"]
-    text: |
-      a) Le parti dichiarano di essere a conoscenza dei reciproci dati anagrafici
-         come risultanti dalle visure acquisite a cura del notaio rogante;
-
-      b) il presente atto e' redatto in conformita' al modello standard
-         `{template_id}` e dovra' essere riletto e firmato dinanzi al notaio;
-
-      c) il corrispettivo / valore di riferimento e' pari a EUR
-         **{base_imponibile_fmt}**.
-
-  - id: "art_1"
-    title: "Articolo 1 — Oggetto"
-    relies_on: ["immobile_cadastral", "address"]
-    text: |
-      [Da completare in fase di review: descrizione dell'oggetto dell'atto.]
-
-  - id: "art_2"
-    title: "Articolo 2 — Prezzo / valore"
-    relies_on: ["amount"]
-    text: |
-      Le parti dichiarano che il valore di riferimento e' quello indicato in premessa.
-
-  - id: "art_3"
-    title: "Articolo 3 — Garanzie e dichiarazioni"
-    relies_on: ["immobile_cadastral"]
-    text: |
-      I dichiaranti, ai sensi e per gli effetti di cui all'art. 1490 c.c. e
-      seguenti, garantiscono la conformita' del bene oggetto del presente atto.
-      La parte trasferente dichiara che il bene e' libero da pesi pregiudizievoli,
-      salvo quanto eventualmente risultante dalle visure ipo-catastali allegate.
-
-  - id: "art_4"
-    title: "Articolo 4 — Trascrizione"
-    relies_on: []
-    text: |
-      Il presente atto sara' trascritto nei pubblici registri ai sensi dell'art.
-      2643 c.c. a cura del notaio rogante.
-
-  - id: "art_5"
-    title: "Articolo 5 — Imposte"
-    relies_on: ["amount"]
-    text: |
-      Per gli aspetti fiscali si rinvia al prospetto di calcolo delle imposte
-      allegato (registro / ipotecaria / catastale), determinate ai sensi del
-      DPR 131/1986 e del D.Lgs 347/1990.
-
   - id: "note_tecniche"
-    title: "Note tecniche per il notaio"
+    title: "Note tecniche (NotAI)"
     relies_on: []
     text: |
-      Questo testo e' una bozza preliminare prodotta da NotAI sulla base del
-      template `{template_id}` e dei dati raccolti tramite visure automatiche
-      e dei documenti caricati dal notaio.
+      Bozza generata dal template `{template_id}` con i seguenti slot:
+
+      {slots_summary_md}
 
       Le parti sostanziali (oggetto, prezzo definitivo, clausole specifiche)
-      DEVONO essere completate e validate dal notaio prima della firma.
+      DEVONO essere lette, confermate e firmate dal notaio prima della stipula.

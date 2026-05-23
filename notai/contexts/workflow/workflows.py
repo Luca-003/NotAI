@@ -26,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
         draft_generate,
         human_review_completed,
         human_review_requested,
+        slot_extract,
         tax_calculate,
         visura_anpr,
         visura_telemaco,
@@ -36,6 +37,8 @@ with workflow.unsafe.imports_passed_through():
         HumanReviewDecision,
         HumanReviewRequest,
         HumanReviewResponse,
+        SlotExtractRequest,
+        SlotExtractResult,
         TaxCalculationRequest,
         VisuraRequest,
         VisuraResult,
@@ -62,6 +65,9 @@ class AtoWorkflowState:
 
     status: str = WorkflowStatus.BOZZA.value
     visure: list[dict] = field(default_factory=list)
+    extracted_slots: dict[str, Any] = field(default_factory=dict)  # slot_name -> value
+    extracted_provenance: dict[str, dict] = field(default_factory=dict)  # slot_name -> {chunk_id,...}
+    extracted_abstained: list[str] = field(default_factory=list)
     draft: dict | None = None
     tax: dict | None = None
     review: dict | None = None
@@ -138,20 +144,41 @@ class AtoWorkflow:
             for r in visure_results
         ]
 
-        # 2) Generazione bozza
+        # 1.5) Estrazione slot dai documenti di input gia' classificati.
+        # Se non ci sono docs/classified, ritorna risultato vuoto e il draft
+        # usa solo i valori del form (fallback).
+        slot_res: SlotExtractResult = await workflow.execute_activity(
+            slot_extract,
+            SlotExtractRequest(ctx=ctx, template_id=input.template_id),
+            start_to_close_timeout=timedelta(minutes=5),  # LLM extraction puo' essere lenta
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+        self._state.extracted_slots = slot_res.slots
+        self._state.extracted_provenance = slot_res.provenance
+        self._state.extracted_abstained = slot_res.abstained
+
+        # 2) Generazione bozza. Merge: valori estratti vincono sul form;
+        # il form e' fallback per cio' che non e' stato estratto.
         self._state.status = WorkflowStatus.DRAFT_IN_CORSO.value
+        merged_slots: dict[str, Any] = {
+            "parties": input.parties,
+            "visure_count": len(visure_results),
+            "visure_summaries": self._state.visure,
+            "base_imponibile": input.base_imponibile,
+            "is_prima_casa": input.is_prima_casa,
+            "_extracted_slot_names": list(slot_res.slots.keys()),
+            "_abstained_slot_names": slot_res.abstained,
+        }
+        # Estratti sovrascrivono il form. Es. se l'LLM ha estratto base_imponibile
+        # dal contratto preliminare, usiamo quello e non il form.
+        merged_slots.update(slot_res.slots)
+
         draft: DraftResult = await workflow.execute_activity(
             draft_generate,
             DraftRequest(
                 ctx=ctx,
                 template_id=input.template_id,
-                slots={
-                    "parties": input.parties,
-                    "visure_count": len(visure_results),
-                    "visure_summaries": self._state.visure,
-                    "base_imponibile": input.base_imponibile,
-                    "is_prima_casa": input.is_prima_casa,
-                },
+                slots=merged_slots,
             ),
             start_to_close_timeout=timedelta(seconds=60),
             retry_policy=retry,
