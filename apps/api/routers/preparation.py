@@ -346,6 +346,111 @@ async def acquire_visure(
 
 
 # ---------------------------------------------------------------------------
+# POST restart-classification: recupero da chunk pending dopo crash/restart
+# ---------------------------------------------------------------------------
+
+
+@background_safe("notai.preparation.restart_classify")
+async def _bg_reclassify(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
+    from notai.contexts.documents.classification import classify_document_chunks
+
+    await classify_document_chunks(document_id, tenant_id)
+
+
+@router.post("/{act_id}/preparation/restart-classification")
+async def restart_classification(
+    act_id: uuid.UUID,
+    principal: TenantDep,
+    session: DbDep,
+    background: BackgroundTasks,
+    include_abstained: bool = False,
+    include_failed: bool = True,
+) -> dict:
+    """Ri-trigger la classificazione per tutti i documenti dell'atto i cui
+    chunk sono ancora pending/in_progress (default) o abstained/failed
+    (su richiesta).
+
+    Casi tipici:
+      - include_abstained=true: utile dopo sovraccarico LLM in cui tutti
+        i chunk sono diventati abstained per timeout (non per contenuto)
+      - include_failed=true (default): retry dei fallimenti effimeri
+
+    Per i chunk inclusi: classification_status -> 'pending' (reset),
+    poi schedule del BackgroundTask classify_document_chunks (idempotente
+    sui chunk 'done').
+    """
+    import sqlalchemy as sa
+    from notai.contexts.documents.models import DocumentChunk
+
+    act = await ActRepository(session).get(act_id)
+    if act is None:
+        raise HTTPException(status_code=404, detail="act not found")
+
+    docs = (
+        await session.execute(
+            select(Document)
+            .where(Document.act_id == act_id, not_deleted(Document))
+        )
+    ).scalars().all()
+
+    # Stati da riprovare
+    retry_states = ["pending", "in_progress"]
+    if include_failed:
+        retry_states.append("failed")
+    if include_abstained:
+        retry_states.append("abstained")
+
+    # Reset dei chunk negli stati selezionati -> pending
+    affected_doc_ids: set[uuid.UUID] = set()
+    for d in docs:
+        chunk_ids = (
+            await session.execute(
+                select(DocumentChunk.id)
+                .where(
+                    DocumentChunk.document_id == d.id,
+                    DocumentChunk.classification_status.in_(retry_states),
+                )
+            )
+        ).scalars().all()
+        if not chunk_ids:
+            continue
+        await session.execute(
+            sa.update(DocumentChunk)
+            .where(DocumentChunk.id.in_(chunk_ids))
+            .values(classification_status="pending", classification=None, classified_at=None)
+        )
+        affected_doc_ids.add(d.id)
+
+    if not affected_doc_ids:
+        return {"act_id": str(act_id), "restarted_documents": 0, "note": f"nessun chunk in stati {retry_states}"}
+
+    await audit_logger.append(
+        session=session,
+        tenant_id=principal.tenant_id,
+        stream_id=stream_for_act(act_id),
+        type="preparation.classification_restarted",
+        payload={
+            "include_abstained": include_abstained,
+            "include_failed": include_failed,
+            "documents": [str(d) for d in affected_doc_ids],
+        },
+        actor=principal.as_actor(),
+    )
+    await session.commit()
+
+    for did in affected_doc_ids:
+        background.add_task(_bg_reclassify, did, principal.tenant_id)
+
+    return {
+        "act_id": str(act_id),
+        "restarted_documents": len(affected_doc_ids),
+        "document_ids": [str(d) for d in affected_doc_ids],
+        "include_abstained": include_abstained,
+        "include_failed": include_failed,
+    }
+
+
+# ---------------------------------------------------------------------------
 # POST extract-preview
 # ---------------------------------------------------------------------------
 

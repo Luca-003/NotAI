@@ -102,6 +102,19 @@ export function ActPreparation({
     },
   });
 
+  const restartClassify = useMutation({
+    mutationFn: (opts: { includeAbstained: boolean }) =>
+      apiFetch<{ restarted_documents: number; note?: string }>(
+        `/v1/acts/${actId}/preparation/restart-classification?include_abstained=${opts.includeAbstained}`,
+        { method: "POST" },
+        session.token,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["preparation", actId] });
+      qc.invalidateQueries({ queryKey: ["docs", actId] });
+    },
+  });
+
   const extractPreview = useMutation({
     mutationFn: () =>
       apiFetch<{ slots: Record<string, unknown>; abstained: string[] }>(
@@ -163,6 +176,7 @@ export function ActPreparation({
         consolidatedAlready={consolidatedAlready}
         onProceed={onProceed}
         canExecute={s.can_execute}
+        restartClassify={restartClassify}
       />
 
       {/* Workspace documenti: IN ALTO perche' e' il vero centro dell'azione */}
@@ -360,6 +374,7 @@ function PreparationStatusBar({
   consolidatedAlready,
   onProceed,
   canExecute,
+  restartClassify,
 }: {
   s: PrepStatus;
   step1Done: boolean;
@@ -369,6 +384,10 @@ function PreparationStatusBar({
   consolidatedAlready: boolean;
   onProceed: () => void;
   canExecute: boolean;
+  restartClassify: {
+    mutate: (vars: { includeAbstained: boolean }) => void;
+    isPending: boolean;
+  };
 }) {
   const slotsCount = s.preview_slots ? Object.keys(s.preview_slots.slots).length : 0;
   const c = s.step1_catalog;
@@ -488,9 +507,56 @@ function PreparationStatusBar({
           `}</style>
         </div>
       )}
+
+      {/* Recovery: chunk bloccati (pending/in_progress senza heartbeat)
+          o tutti astenuti -> mostra bottoni riavvio classificazione */}
+      {total > 0 && !step1Done && (pending + inProgress > 0 || abstained === total) && (
+        <div style={{
+          marginTop: "0.6rem", padding: "0.5rem 0.75rem",
+          background: "#fef3c7", borderRadius: 4, fontSize: "0.82rem",
+          display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem",
+          color: "#854d0e",
+        }}>
+          <span>
+            {abstained === total
+              ? "Tutti i chunk sono in stato 'astenuti' (LLM ha rinunciato, probabilmente per timeout)."
+              : "Se la barra non avanza per piu' di 90s, il task in background potrebbe essere bloccato."}
+          </span>
+          <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
+            {pending + inProgress > 0 && (
+              <button
+                onClick={() => restartClassify.mutate({ includeAbstained: false })}
+                disabled={restartClassify.isPending}
+                style={recoverBtn}
+              >
+                {restartClassify.isPending ? "..." : "↻ Riavvia"}
+              </button>
+            )}
+            <button
+              onClick={() => restartClassify.mutate({ includeAbstained: true })}
+              disabled={restartClassify.isPending}
+              style={{ ...recoverBtn, background: "#1e293b" }}
+            >
+              {restartClassify.isPending ? "..." : "↻ Riavvia (anche astenuti)"}
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
+
+const recoverBtn: React.CSSProperties = {
+  padding: "0.35rem 0.75rem",
+  background: "#a16207",
+  color: "white",
+  border: "none",
+  borderRadius: 3,
+  cursor: "pointer",
+  fontWeight: 600,
+  fontSize: "0.82rem",
+  whiteSpace: "nowrap",
+};
 
 function useHeartbeatLabel(iso: string | null): string {
   const [now, setNow] = useState(Date.now());
