@@ -27,13 +27,22 @@ export function DemoLoader({
     mutationFn: async (): Promise<LoadedScenario[]> => {
       if (!session) throw new Error("Devi prima accedere (button in topbar)");
       const results: LoadedScenario[] = [];
+      // Suffisso univoco per evitare collisioni sul vincolo uq_practices_tenant_code
+      // (DEMO_SCENARIOS calcola il code una sola volta al load del modulo).
+      const stamp = `${Date.now().toString().slice(-6)}`;
+      let counter = 0;
       for (const sc of DEMO_SCENARIOS) {
+        counter += 1;
+        const practiceBody = {
+          ...sc.practice,
+          code: `2026/${stamp}-${counter}`,
+        };
         // 1. Crea pratica
         const practice = await apiFetch<{ id: string }>(
           "/v1/practices",
           {
             method: "POST",
-            body: JSON.stringify(sc.practice),
+            body: JSON.stringify(practiceBody),
           },
           session.token,
         );
