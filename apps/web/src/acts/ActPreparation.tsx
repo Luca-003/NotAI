@@ -36,6 +36,14 @@ type PrepStatus = {
     documents_classified: number;
     chunks_total: number;
     chunks_classified: number;
+    chunk_status_breakdown: {
+      pending: number;
+      in_progress: number;
+      done: number;
+      abstained: number;
+      failed: number;
+    };
+    last_activity_at: string | null;
     status: "ready" | "pending";
   };
   step2_visure_needed: {
@@ -363,6 +371,18 @@ function PreparationStatusBar({
   canExecute: boolean;
 }) {
   const slotsCount = s.preview_slots ? Object.keys(s.preview_slots.slots).length : 0;
+  const c = s.step1_catalog;
+  const total = c.chunks_total;
+  const done = c.chunk_status_breakdown?.done ?? c.chunks_classified;
+  const inProgress = c.chunk_status_breakdown?.in_progress ?? 0;
+  const abstained = c.chunk_status_breakdown?.abstained ?? 0;
+  const failed = c.chunk_status_breakdown?.failed ?? 0;
+  const pending = c.chunk_status_breakdown?.pending ?? Math.max(0, total - done - inProgress - abstained - failed);
+  const pctDone = total > 0 ? Math.round((done * 100) / total) : 0;
+  const pctAbst = total > 0 ? Math.round((abstained * 100) / total) : 0;
+  const pctFail = total > 0 ? Math.round((failed * 100) / total) : 0;
+  const showProgress = total > 0 && !step1Done;
+  const heartbeat = useHeartbeatLabel(c.last_activity_at);
   const stepDot = (ok: boolean, n: number, label: string) => (
     <div style={{
       display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.85rem",
@@ -380,48 +400,113 @@ function PreparationStatusBar({
   return (
     <section style={{
       background: "white", border: "1px solid #e2e8f0", borderRadius: 6,
-      padding: "0.75rem 1rem", display: "flex", alignItems: "center",
-      justifyContent: "space-between", flexWrap: "wrap", gap: "1rem",
+      padding: "0.75rem 1rem",
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
-        {stepDot(step1Done, 1, `Catalogo (${s.step1_catalog.documents_classified}/${s.step1_catalog.documents_total} doc)`)}
-        {stepDot(step2Missing === 0 && s.step2_visure_needed.expected_document_types.length > 0, 2, `Tipi previsti (${s.step2_visure_needed.covered.length}/${s.step2_visure_needed.expected_document_types.length})`)}
-        {stepDot(s.step3_visure_acquired.count > 0 && step3Done, 3, `Visure auto (${s.step3_visure_acquired.count})`)}
-        {stepDot(slotsCount > 0, 4, `Slot estratti (${slotsCount})`)}
-        {stepDot(consolidatedAlready, 5, "Consolida")}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        flexWrap: "wrap", gap: "1rem",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+          {stepDot(step1Done, 1, `Catalogo (${s.step1_catalog.documents_classified}/${s.step1_catalog.documents_total} doc)`)}
+          {stepDot(step2Missing === 0 && s.step2_visure_needed.expected_document_types.length > 0, 2, `Tipi previsti (${s.step2_visure_needed.covered.length}/${s.step2_visure_needed.expected_document_types.length})`)}
+          {stepDot(s.step3_visure_acquired.count > 0 && step3Done, 3, `Visure auto (${s.step3_visure_acquired.count})`)}
+          {stepDot(slotsCount > 0, 4, `Slot estratti (${slotsCount})`)}
+          {stepDot(consolidatedAlready, 5, "Consolida")}
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          {!consolidatedAlready && (
+            <button
+              onClick={() => consolidate.mutate()}
+              disabled={!step1Done || consolidate.isPending}
+              style={{
+                padding: "0.5rem 1rem",
+                background: step1Done ? "#1e293b" : "#cbd5e1",
+                color: "white", border: "none", borderRadius: 4,
+                cursor: step1Done ? "pointer" : "not-allowed", fontWeight: 600,
+                fontSize: "0.88rem",
+              }}
+            >
+              {consolidate.isPending ? "..." : "✓ Consolida"}
+            </button>
+          )}
+          {canExecute && (
+            <button
+              onClick={onProceed}
+              style={{
+                padding: "0.55rem 1.15rem",
+                background: "#16a34a", color: "white",
+                border: "none", borderRadius: 4, cursor: "pointer",
+                fontWeight: 700, fontSize: "0.95rem",
+              }}
+            >
+              ▶ Procedi alla generazione
+            </button>
+          )}
+        </div>
       </div>
-      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-        {!consolidatedAlready && (
-          <button
-            onClick={() => consolidate.mutate()}
-            disabled={!step1Done || consolidate.isPending}
-            style={{
-              padding: "0.5rem 1rem",
-              background: step1Done ? "#1e293b" : "#cbd5e1",
-              color: "white", border: "none", borderRadius: 4,
-              cursor: step1Done ? "pointer" : "not-allowed", fontWeight: 600,
-              fontSize: "0.88rem",
-            }}
-          >
-            {consolidate.isPending ? "..." : "✓ Consolida"}
-          </button>
-        )}
-        {canExecute && (
-          <button
-            onClick={onProceed}
-            style={{
-              padding: "0.55rem 1.15rem",
-              background: "#16a34a", color: "white",
-              border: "none", borderRadius: 4, cursor: "pointer",
-              fontWeight: 700, fontSize: "0.95rem",
-            }}
-          >
-            ▶ Procedi alla generazione
-          </button>
-        )}
-      </div>
+
+      {showProgress && (
+        <div style={{ marginTop: "0.8rem" }}>
+          <div style={{
+            display: "flex", justifyContent: "space-between",
+            fontSize: "0.78rem", color: "#475569", marginBottom: "0.3rem",
+          }}>
+            <span>
+              Classificazione LLM in corso: <strong>{done}</strong>/{total} chunk pronti
+              {inProgress > 0 && <span style={{ color: "#1e3a8a" }}> · {inProgress} in elaborazione</span>}
+              {pending > 0 && <span style={{ color: "#64748b" }}> · {pending} in coda</span>}
+              {abstained > 0 && <span style={{ color: "#92400e" }}> · {abstained} astenuti</span>}
+              {failed > 0 && <span style={{ color: "#b91c1c" }}> · {failed} falliti</span>}
+            </span>
+            <span style={{ color: "#64748b" }}>
+              Ultima attivita': <strong>{heartbeat}</strong>
+            </span>
+          </div>
+          <div style={{
+            position: "relative", height: 14, background: "#e2e8f0",
+            borderRadius: 7, overflow: "hidden", display: "flex",
+          }}>
+            <div title={`done ${pctDone}%`} style={{ width: `${pctDone}%`, background: "#16a34a" }} />
+            <div title={`abstained ${pctAbst}%`} style={{ width: `${pctAbst}%`, background: "#f59e0b" }} />
+            <div title={`failed ${pctFail}%`} style={{ width: `${pctFail}%`, background: "#dc2626" }} />
+            {inProgress > 0 && (
+              <div
+                style={{
+                  width: `${Math.round((inProgress * 100) / total)}%`,
+                  background: "repeating-linear-gradient(45deg,#93c5fd,#93c5fd 6px,#bfdbfe 6px,#bfdbfe 12px)",
+                  animation: "notai-pulse 1.5s linear infinite",
+                }}
+              />
+            )}
+          </div>
+          <style>{`
+            @keyframes notai-pulse {
+              0% { opacity: 0.85 }
+              50% { opacity: 1 }
+              100% { opacity: 0.85 }
+            }
+          `}</style>
+        </div>
+      )}
     </section>
   );
+}
+
+function useHeartbeatLabel(iso: string | null): string {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!iso) return "(nessuna)";
+  const t = Date.parse(iso);
+  if (isNaN(t)) return "(?)";
+  const sec = Math.max(0, Math.round((now - t) / 1000));
+  if (sec < 60) return `${sec}s fa`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s fa`;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return `${h}h ${m}m fa`;
 }
 
 function SlotPreviewCard({

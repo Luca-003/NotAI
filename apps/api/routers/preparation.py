@@ -101,6 +101,20 @@ async def get_preparation_status(
         1 for c in chunks_rows if c.classification_status == "done"
     )
 
+    # Breakdown per status (utile alla progress bar nel FE)
+    chunk_status_breakdown: dict[str, int] = {
+        "pending": 0, "in_progress": 0, "done": 0, "abstained": 0, "failed": 0,
+    }
+    last_activity_at: str | None = None
+    for c in chunks_rows:
+        st = c.classification_status or "pending"
+        if st in chunk_status_breakdown:
+            chunk_status_breakdown[st] += 1
+        if c.classified_at is not None:
+            iso = c.classified_at.isoformat()
+            if last_activity_at is None or iso > last_activity_at:
+                last_activity_at = iso
+
     catalog_status = (
         "ready"
         if docs_total > 0 and docs_total == docs_classified and chunks_total == chunks_classified and chunks_total > 0
@@ -154,6 +168,8 @@ async def get_preparation_status(
             "documents_classified": docs_classified,
             "chunks_total": chunks_total,
             "chunks_classified": chunks_classified,
+            "chunk_status_breakdown": chunk_status_breakdown,
+            "last_activity_at": last_activity_at,
             "status": catalog_status,
         },
         "step2_visure_needed": {
