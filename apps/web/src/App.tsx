@@ -18,7 +18,7 @@ export function App() {
     <div style={layout.app}>
       <header style={layout.topbar}>
         <div style={layout.brand}>
-          <strong>NotAI</strong>
+          <strong>NotAI/O</strong>
           <span style={layout.brandSub}>automazione studi notarili e legali</span>
         </div>
 
