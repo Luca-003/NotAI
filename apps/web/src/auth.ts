@@ -9,7 +9,7 @@
 // Risultato: dopo il caricamento, ogni pagina vede gia' principal + token
 // senza bisogno di form o copia-incolla.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const TOKEN_KEY = "notai.jwt";
@@ -74,6 +74,16 @@ export function useSession() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Reagisce al 401 globale: pulisce stato + mostra errore "sessione scaduta".
+  useEffect(() => {
+    const onExpired = () => {
+      setSession(null);
+      setError("Sessione scaduta - clicca 'Accedi (dev)' per riavviare.");
+    };
+    window.addEventListener("notai:session-expired", onExpired);
+    return () => window.removeEventListener("notai:session-expired", onExpired);
+  }, []);
+
   // Auto-login con un click (chiamato dal button "Accedi")
   const login = async () => {
     setLoading(true);
@@ -111,6 +121,15 @@ export async function apiFetch<T = unknown>(
   if (t) headers.Authorization = `Bearer ${t}`;
   const r = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (!r.ok) {
+    // 401 = JWT scaduto/invalido. Pulisci sessione e forza re-login.
+    // L'utente vedra' il bottone "Accedi (dev)" in topbar e il messaggio
+    // sotto via window event (intercept ottimisticamente con un alert).
+    if (r.status === 401) {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(TENANT_KEY);
+      // Notifica il resto dell'app: il listener di useSession reagisce.
+      window.dispatchEvent(new CustomEvent("notai:session-expired"));
+    }
     const txt = await r.text().catch(() => "");
     throw new Error(`${path}: ${r.status} ${txt}`);
   }

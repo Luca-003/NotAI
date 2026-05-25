@@ -176,7 +176,9 @@ class Settings(BaseSettings):
 
     jwt_secret: SecretStr = Field(default=SecretStr("change_me_jwt_secret"))
     jwt_algo: str = "HS256"
-    jwt_ttl_seconds: int = 3600
+    # Dev: TTL lungo (24h) per evitare logout durante demo lunghe.
+    # In prod assert_prod_safe forzera' un valore ragionevole (es. 3600).
+    jwt_ttl_seconds: int = 86_400
     cors_origins: str = "http://localhost:5173,https://notai.localhost"
 
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
