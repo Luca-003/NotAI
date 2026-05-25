@@ -76,6 +76,7 @@ async def classify_chunk(
     # ---- Phase 2: pre-pass euristico ----
     from notai.contexts.documents.heuristic_classifier import classify_heuristic
     from notai.contexts.documents.heuristic_entities import extract_entities
+    from notai.contexts.documents.zero_shot_classifier import classify_zero_shot
 
     heur = classify_heuristic(document_filename, chunk.text)
     if heur is not None:
@@ -115,6 +116,44 @@ async def classify_chunk(
             confidence=heur.confidence,
             abstain=False,
             rationale=f"heuristic: {heur.rationale}",
+        )
+
+    # ---- Phase 3B: zero-shot embedding (intermedio, ~1-2s) ----
+    zs = await classify_zero_shot(chunk.text)
+    if zs is not None:
+        # Anche qui popoliamo entities via regex (gratis)
+        regex_entities = extract_entities(chunk.text)
+        await audit_logger.append(
+            session=session,
+            tenant_id=tenant_id,
+            stream_id=stream_for_document(chunk.document_id),
+            type="chunk.classified_by_zero_shot",
+            payload={
+                "chunk_id": str(chunk.id),
+                "ordering": chunk.ordering,
+                "document_type": zs.document_type,
+                "confidence": zs.confidence,
+                "second_best": zs.second_best,
+                "second_score": zs.second_score,
+                "entities_count": len(regex_entities),
+            },
+            actor="zero-shot-classifier",
+        )
+        logger.info(
+            "notai.classify.zero_shot_match",
+            chunk_id=str(chunk.id),
+            document_type=zs.document_type,
+            confidence=zs.confidence,
+            entities=len(regex_entities),
+        )
+        return ChunkClassification(
+            document_type=zs.document_type,  # type: ignore[arg-type]
+            entities=regex_entities,
+            summary=None,
+            suggested_tags=[],
+            confidence=zs.confidence,
+            abstain=False,
+            rationale=zs.rationale,
         )
 
     # ---- Fallback LLM ----
