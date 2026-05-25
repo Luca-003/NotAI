@@ -103,16 +103,18 @@ class LLMRoutingSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="NOTAI_LLM_", extra="ignore")
 
-    # Generazione di testo libero (redrafting clausole, riassunti).
+    # Generazione di testo libero (redrafting clausole, riassunti). Qualita' alta.
     generation: str = "local/qwen2.5-7b"
-    # Estrazione strutturata (parsing visure, dati da documenti).
+    # Estrazione strutturata (parsing visure, dati da documenti). Qualita' alta.
     extraction: str = "local/qwen2.5-7b"
     # Embeddings per RAG.
     embeddings: str = "local/embeddings"
     # Verifier per cross-check abstention (idealmente modello diverso/piu' piccolo).
-    verifier: str = "local/qwen2.5-7b"
-    # Classificazione/tagging (zero-shot o few-shot).
-    classification: str = "local/qwen2.5-7b"
+    verifier: str = "local/qwen2.5-3b"
+    # Classificazione/tagging (zero-shot o few-shot): task SEMPLICE, basta
+    # un modello piccolo. 3B usa ~1.9GB RAM (vs 4.4 di 7B) ed e' 4-8x piu'
+    # veloce. Quasi stessa qualita' su 'che tipo di documento e' questo?'.
+    classification: str = "local/qwen2.5-3b"
 
     # Provider Ollama: URL diretto per discovery dei modelli installati sul host.
     # L'app chiama l'API Ollama /api/tags per scoprire cosa l'utente ha gia' scaricato.

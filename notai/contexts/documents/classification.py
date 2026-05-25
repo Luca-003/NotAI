@@ -16,6 +16,7 @@ Politica di abstention:
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -33,9 +34,11 @@ from notai.shared.tenancy.session import scoped_session
 
 logger = structlog.get_logger(__name__)
 
-# Concorrenza massima delle call LLM di classificazione: vLLM/Ollama gestiscono
-# bene 4-8 inflight; sopra rischiamo OOM o rate-limit su gateway esterni.
-CLASSIFY_CONCURRENCY = 5
+# Concorrenza massima delle call LLM di classificazione.
+# Default 2: tiene la macchina usabile in parallelo (vs 5 che satura CPU/RAM
+# con LLM 7B locale). Tunabile via env NOTAI_CLASSIFY_CONCURRENCY.
+# Per chi ha GPU o usa cloud: alza a 5-10 senza problemi.
+CLASSIFY_CONCURRENCY = int(os.environ.get("NOTAI_CLASSIFY_CONCURRENCY", "2"))
 
 SYSTEM_PROMPT = (
     "Sei un classificatore di documenti per uno studio notarile italiano. "

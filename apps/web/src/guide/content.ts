@@ -400,6 +400,38 @@ I modelli disponibili vengono scoperti automaticamente da:
 
 Vai alla Dashboard per vedere i modelli installati e cambiare la mappa di routing.
 
+### Ottimizzazione on-prem (per non bloccare il PC)
+
+Default attuale per ridurre l'impatto sulla macchina:
+
+- **Modello classificazione**: \`qwen2.5:3b\` (1.9 GB RAM) invece di 7B (4.4 GB).
+  Stessa qualita' sui task 'che tipo di documento e' questo', 4-8x piu' veloce.
+- **Concorrenza**: 2 call LLM in parallelo (era 5). Tunabile via
+  \`NOTAI_CLASSIFY_CONCURRENCY\` env var (alza a 5-10 se hai GPU).
+
+Sull'host (NON nel container), settare queste env var per Ollama:
+
+\`\`\`
+OLLAMA_NUM_PARALLEL=1          # CPU: 1; GPU: 4
+OLLAMA_MAX_LOADED_MODELS=1     # un modello alla volta, no swap RAM
+OLLAMA_KEEP_ALIVE=30m          # tieni il modello caldo per 30 min
+\`\`\`
+
+Modelli da scaricare per il setup default:
+\`\`\`
+ollama pull qwen2.5:3b-instruct      # 1.9 GB, classification + verifier
+ollama pull qwen2.5:7b-instruct      # 4.4 GB, extraction + generation
+ollama pull bge-m3                    # 1.2 GB, embeddings
+\`\`\`
+
+Roadmap a tendere (oltre la Phase 1 attuale):
+
+| Phase | Cosa | Speedup atteso | Costo |
+|---|---|---|---|
+| 2 | Pre-pass regex (filename + first line) | 5x meno LLM call | ~1g codice |
+| 3 | Classificatore fine-tuned (BERT-IT specialized) | 100x su document_type | ~3g + dataset |
+| 4 | GPU acceleration (auto-detect) | 10-20x baseline | dipende da HW |
+
 ### Modalita' cloud FREE (raccomandata per demo)
 
 L'LLM locale (Ollama qwen2.5:7b su CPU) impiega 30-70s per chunk: pesante

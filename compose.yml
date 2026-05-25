@@ -297,6 +297,15 @@ services:
       LITELLM_HOST: litellm
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?required}
       NOTAI_JWT_SECRET: ${NOTAI_JWT_SECRET:?required}
+      # Routing LLM tunabile via .env (default in notai/config.py: 3b per
+      # classification/verifier, 7b per generation/extraction)
+      NOTAI_LLM_GENERATION: ${NOTAI_LLM_GENERATION:-}
+      NOTAI_LLM_EXTRACTION: ${NOTAI_LLM_EXTRACTION:-}
+      NOTAI_LLM_EMBEDDINGS: ${NOTAI_LLM_EMBEDDINGS:-}
+      NOTAI_LLM_VERIFIER: ${NOTAI_LLM_VERIFIER:-}
+      NOTAI_LLM_CLASSIFICATION: ${NOTAI_LLM_CLASSIFICATION:-}
+      # Concorrenza classificazione: default 2, alza a 5-10 su GPU/cloud
+      NOTAI_CLASSIFY_CONCURRENCY: ${NOTAI_CLASSIFY_CONCURRENCY:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_SERVICE_NAME: notai-api
     depends_on:
@@ -347,6 +356,13 @@ services:
       OPENSEARCH_HOST: opensearch
       QDRANT_HOST: qdrant
       QDRANT_API_KEY: ${QDRANT_API_KEY:?required}
+      # Routing LLM (gli activities Temporal usano gli stessi alias dell'API)
+      NOTAI_LLM_GENERATION: ${NOTAI_LLM_GENERATION:-}
+      NOTAI_LLM_EXTRACTION: ${NOTAI_LLM_EXTRACTION:-}
+      NOTAI_LLM_EMBEDDINGS: ${NOTAI_LLM_EMBEDDINGS:-}
+      NOTAI_LLM_VERIFIER: ${NOTAI_LLM_VERIFIER:-}
+      NOTAI_LLM_CLASSIFICATION: ${NOTAI_LLM_CLASSIFICATION:-}
+      NOTAI_CLASSIFY_CONCURRENCY: ${NOTAI_CLASSIFY_CONCURRENCY:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_SERVICE_NAME: notai-workers
     depends_on:
