@@ -67,11 +67,53 @@ async def classify_chunk(
     document_filename: str,
     citations_in_kb: set[str] | None = None,
 ) -> ChunkClassification | None:
-    """Una call LLM per chunk. Ritorna l'output parsato o None se abstain/error.
+    """Classifica un chunk. Pre-pass euristico CPU (microsecondi); se non
+    confident, fallback su LLM strutturato.
 
     `citations_in_kb`: se non passato, lo carichiamo qui (lento perche' fa una
     query ogni volta). Il chiamante batch DOVREBBE pre-caricarlo una volta sola.
     """
+    # ---- Phase 2: pre-pass euristico ----
+    from notai.contexts.documents.heuristic_classifier import classify_heuristic
+
+    heur = classify_heuristic(document_filename, chunk.text)
+    if heur is not None:
+        # Confident classification senza LLM: salviamo lo stato e ritorniamo
+        # ChunkClassification con entities=[] (slot_extractor lavora direttamente
+        # sul chunk.text, non perde nulla).
+        await audit_logger.append(
+            session=session,
+            tenant_id=tenant_id,
+            stream_id=stream_for_document(chunk.document_id),
+            type="chunk.classified_by_heuristic",
+            payload={
+                "chunk_id": str(chunk.id),
+                "ordering": chunk.ordering,
+                "document_type": heur.document_type,
+                "confidence": heur.confidence,
+                "rationale": heur.rationale,
+                "tags": list(heur.suggested_tags),
+            },
+            actor="heuristic-classifier",
+        )
+        logger.info(
+            "notai.classify.heuristic_match",
+            chunk_id=str(chunk.id),
+            document_type=heur.document_type,
+            confidence=heur.confidence,
+            rationale=heur.rationale,
+        )
+        return ChunkClassification(
+            document_type=heur.document_type,  # type: ignore[arg-type]
+            entities=[],
+            summary=None,
+            suggested_tags=list(heur.suggested_tags),
+            confidence=heur.confidence,
+            abstain=False,
+            rationale=f"heuristic: {heur.rationale}",
+        )
+
+    # ---- Fallback LLM ----
     user = (
         f"FILE SORGENTE: {document_filename}\n"
         f"CHUNK #{chunk.ordering}"
