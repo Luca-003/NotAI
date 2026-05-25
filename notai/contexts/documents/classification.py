@@ -75,12 +75,14 @@ async def classify_chunk(
     """
     # ---- Phase 2: pre-pass euristico ----
     from notai.contexts.documents.heuristic_classifier import classify_heuristic
+    from notai.contexts.documents.heuristic_entities import extract_entities
 
     heur = classify_heuristic(document_filename, chunk.text)
     if heur is not None:
-        # Confident classification senza LLM: salviamo lo stato e ritorniamo
-        # ChunkClassification con entities=[] (slot_extractor lavora direttamente
-        # sul chunk.text, non perde nulla).
+        # Phase 3A: anche entities dal regex extractor (CF, foglio/particella,
+        # importi, date, indirizzi, persone) - tutte letteralmente nel testo.
+        regex_entities = extract_entities(chunk.text)
+
         await audit_logger.append(
             session=session,
             tenant_id=tenant_id,
@@ -93,6 +95,7 @@ async def classify_chunk(
                 "confidence": heur.confidence,
                 "rationale": heur.rationale,
                 "tags": list(heur.suggested_tags),
+                "entities_count": len(regex_entities),
             },
             actor="heuristic-classifier",
         )
@@ -101,11 +104,12 @@ async def classify_chunk(
             chunk_id=str(chunk.id),
             document_type=heur.document_type,
             confidence=heur.confidence,
+            entities=len(regex_entities),
             rationale=heur.rationale,
         )
         return ChunkClassification(
             document_type=heur.document_type,  # type: ignore[arg-type]
-            entities=[],
+            entities=regex_entities,
             summary=None,
             suggested_tags=list(heur.suggested_tags),
             confidence=heur.confidence,
