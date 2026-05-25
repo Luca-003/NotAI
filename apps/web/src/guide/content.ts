@@ -399,6 +399,39 @@ I modelli disponibili vengono scoperti automaticamente da:
 - **Ollama** \`/api/tags\` -> modelli installati sull'host (\`ollama pull ...\`)
 
 Vai alla Dashboard per vedere i modelli installati e cambiare la mappa di routing.
+
+### Modalita' cloud FREE (raccomandata per demo)
+
+L'LLM locale (Ollama qwen2.5:7b su CPU) impiega 30-70s per chunk: pesante
+per la macchina dev e fastidioso durante una demo. Switch a provider cloud
+gratuiti — nessuna carta richiesta:
+
+**Groq** — Llama 3.3 70B, latenza <1s, 30 req/min, 14400 req/giorno
+1. Signup su [console.groq.com](https://console.groq.com)
+2. API Keys -> Create
+3. \`.env\`: \`GROQ_API_KEY=gsk_...\`
+
+**Google AI Studio** — Gemini 2.0 Flash, 15 req/min, 1500 req/giorno
+1. [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+2. Crea key
+3. \`.env\`: \`GEMINI_API_KEY=AIza...\`
+
+Cambia il routing:
+\`\`\`
+NOTAI_LLM_CLASSIFICATION=cloud/groq-llama-8b
+NOTAI_LLM_EXTRACTION=cloud/groq-llama-70b
+NOTAI_LLM_GENERATION=cloud/groq-llama-70b
+NOTAI_LLM_VERIFIER=cloud/gemini-flash-lite
+NOTAI_LLM_EMBEDDINGS=local/embeddings   # bge-m3 e' leggero, lascialo locale
+\`\`\`
+
+Poi: \`docker compose restart litellm notai-api notai-workers\`.
+
+Speedup tipico: classificazione di un atto da 5 chunk: ~5 min locale -> ~5 sec cloud.
+
+**Nota privacy**: i provider cloud vedono i chunks inviati. Per atti con dati
+reali di clienti, **tenere locale**. Il cloud va bene per demo, dataset sintetici,
+documenti pubblici (formulari, normativa).
     `,
   },
 

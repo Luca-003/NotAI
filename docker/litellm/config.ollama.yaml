@@ -72,6 +72,39 @@ model_list:
       model: ollama/nomic-embed-text
       api_base: http://host.docker.internal:11434
 
+  # ----- Cloud FREE (richiede API key gratuita - vedi .env.example) -----
+  #
+  # GROQ: signup su https://console.groq.com (no carta richiesta).
+  # Llama 3.3 70B free tier: 30 req/min, 14400 req/giorno. Latenza < 1s.
+  # Ideale per la demo (~20x piu' veloce di Ollama 7B locale).
+  - model_name: cloud/groq-llama-70b
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+
+  - model_name: cloud/groq-llama-8b
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/GROQ_API_KEY
+
+  # GEMINI: API key da https://aistudio.google.com/apikey (no carta).
+  # 2.0-flash free tier: 15 req/min, 1500 req/giorno. Structured output JSON nativo.
+  - model_name: cloud/gemini-flash
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: cloud/gemini-flash-lite
+    litellm_params:
+      model: gemini/gemini-2.0-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+
+  # Gemini embeddings (free 1500 RPD). Alternativa cloud a bge-m3 locale.
+  - model_name: cloud/embeddings-gemini
+    litellm_params:
+      model: gemini/text-embedding-004
+      api_key: os.environ/GEMINI_API_KEY
+
 litellm_settings:
   set_verbose: false
   drop_params: true

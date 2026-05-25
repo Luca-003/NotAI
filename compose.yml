@@ -227,6 +227,10 @@ services:
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?required}
       LITELLM_LOG: INFO
+      # Cloud LLM providers FREE (opzionali). Se vuote, gli alias cloud/*
+      # restituiranno errore. Vedi .env.example per istruzioni signup.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     command: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
     volumes:
       - ./docker/litellm/config.yaml:/etc/litellm/config.yaml:ro
