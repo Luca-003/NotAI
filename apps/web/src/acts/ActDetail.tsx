@@ -39,6 +39,18 @@ type WorkflowState = {
   draft: { document_id: string; sha256: string; storage_uri: string } | null;
   tax: { items: TaxItem[]; total: number } | null;
   review: { decision: string; user_id: string | null } | null;
+  repertorio?: { number: number; year: number; raccolta_number: number } | null;
+  adempimento?: {
+    protocol_id: string;
+    accepted: boolean;
+    transcription_number: string | null;
+    voltura_number: string | null;
+  } | null;
+  conservation?: {
+    bundle_uri: string;
+    bundle_sha256: string;
+    retention_until: string;
+  } | null;
 };
 
 type TaxItem = {
@@ -68,6 +80,10 @@ const ACTIVE_STATUSES = new Set([
   "draft_generated",
   "tax_calculated",
   "review_requested",
+  // Post-firma: anche queste sono "active" -> polling continua
+  "review_completed",
+  "repertorio_assigned",
+  "adempimento_submitted",
 ]);
 
 export function ActDetail({
@@ -464,6 +480,73 @@ function WorkflowView({
           </p>
         </section>
       )}
+
+      {state.repertorio && (
+        <section style={{ ...card, background: "#f0fdf4", borderColor: "#86efac" }}>
+          <h3 style={{ marginTop: 0, color: "#14532d" }}>Repertorio notarile</h3>
+          <p style={{ margin: "0.2rem 0" }}>
+            <strong>Repertorio nr.</strong> {state.repertorio.number} / {state.repertorio.year} ·{" "}
+            <strong>Raccolta nr.</strong> {state.repertorio.raccolta_number} / {state.repertorio.year}
+          </p>
+          <small style={{ color: "#15803d" }}>
+            L. 89/1913 art. 62 · DM 31/10/2006 (repertorio informatico). Numerazione
+            progressiva univoca per studio + anno notarile.
+          </small>
+        </section>
+      )}
+
+      {state.adempimento && (
+        <section style={{ ...card, background: "#eff6ff", borderColor: "#93c5fd" }}>
+          <h3 style={{ marginTop: 0, color: "#1e3a8a" }}>
+            Adempimento Unico telematico (SOGEI mock)
+          </h3>
+          <p style={{ margin: "0.2rem 0" }}>
+            <strong>Protocollo:</strong> <code>{state.adempimento.protocol_id}</code>{" "}
+            {state.adempimento.accepted ? (
+              <span style={{ color: "#16a34a", fontWeight: 600 }}>· ✓ accettato</span>
+            ) : (
+              <span style={{ color: "#b91c1c", fontWeight: 600 }}>· ✗ rifiutato</span>
+            )}
+          </p>
+          {state.adempimento.transcription_number && (
+            <p style={{ margin: "0.2rem 0", fontSize: "0.9rem" }}>
+              Trascrizione: <code>{state.adempimento.transcription_number}</code> · Voltura:{" "}
+              <code>{state.adempimento.voltura_number}</code>
+            </p>
+          )}
+          <small style={{ color: "#1e40af" }}>
+            DPR 131/86 art. 19 - registrazione + trascrizione + voltura in unica
+            trasmissione. <em>Mock SOGEI/Entratel: in Fase 5+ integrazione reale.</em>
+          </small>
+        </section>
+      )}
+
+      {state.conservation && (
+        <section style={{ ...card, background: "#faf5ff", borderColor: "#d8b4fe" }}>
+          <h3 style={{ marginTop: 0, color: "#581c87" }}>Conservazione a norma</h3>
+          <p style={{ margin: "0.2rem 0", fontSize: "0.9rem" }}>
+            <strong>Bundle:</strong>{" "}
+            <code style={{ fontSize: "0.78rem" }}>
+              {state.conservation.bundle_uri.length > 60
+                ? state.conservation.bundle_uri.slice(0, 60) + "..."
+                : state.conservation.bundle_uri}
+            </code>
+          </p>
+          <p style={{ margin: "0.2rem 0", fontSize: "0.9rem" }}>
+            <strong>SHA-256:</strong>{" "}
+            <code style={{ fontSize: "0.78rem" }}>{state.conservation.bundle_sha256.slice(0, 24)}...</code>
+          </p>
+          <p style={{ margin: "0.2rem 0", fontSize: "0.9rem" }}>
+            <strong>Retention:</strong>{" "}
+            fino al {new Date(state.conservation.retention_until).toLocaleDateString("it-IT")} (10 anni)
+          </p>
+          <small style={{ color: "#6b21a8" }}>
+            AgID Linee Guida + SInCRO UNI 11386. Bundle salvato su MinIO con
+            object-lock WORM. <em>Conservatore mock: in Fase 5+ invio a
+            Aruba/InfoCert/Namirial accreditato.</em>
+          </small>
+        </section>
+      )}
     </>
   );
 }
@@ -474,11 +557,15 @@ const STEPS = [
   { id: "tax_calculated", label: "Imposte" },
   { id: "review_requested", label: "Review notaio" },
   { id: "review_completed", label: "Firmato" },
+  { id: "repertorio_assigned", label: "Repertorio" },
+  { id: "adempimento_registered", label: "Registrato (SOGEI)" },
+  { id: "conservato", label: "Conservato (AgID)" },
+  { id: "archiviato", label: "Archiviato" },
 ];
 
 function ProgressSteps({ status }: { status: string }) {
   const idx = STEPS.findIndex((s) => s.id === status);
-  const completed = status === "review_completed";
+  const completed = status === "archiviato";
   return (
     <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem", flexWrap: "wrap" }}>
       {STEPS.map((step, i) => {

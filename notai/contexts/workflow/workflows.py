@@ -23,20 +23,29 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from .activities import (
+        adempimento_submit,
+        conservation_archive,
         draft_generate,
         human_review_completed,
         human_review_requested,
+        repertorio_assign,
         slot_extract,
         tax_calculate,
         visura_anpr,
         visura_telemaco,
     )
     from .common import (
+        AdempimentoUnicoRequest,
+        AdempimentoUnicoResult,
+        ConservationRequest,
+        ConservationResult,
         DraftRequest,
         DraftResult,
         HumanReviewDecision,
         HumanReviewRequest,
         HumanReviewResponse,
+        RepertorioRequest,
+        RepertorioResult,
         SlotExtractRequest,
         SlotExtractResult,
         TaxCalculationRequest,
@@ -71,6 +80,10 @@ class AtoWorkflowState:
     draft: dict | None = None
     tax: dict | None = None
     review: dict | None = None
+    # Post-firma
+    repertorio: dict | None = None        # {number, year, raccolta_number}
+    adempimento: dict | None = None       # {protocol_id, accepted, transcription_number, voltura_number}
+    conservation: dict | None = None      # {bundle_uri, bundle_sha256, retention_until}
 
 
 @workflow.defn(name="AtoWorkflow")
@@ -252,12 +265,82 @@ class AtoWorkflow:
         }
 
         decision = self._review_response.decision
-        if decision == HumanReviewDecision.APPROVED.value:
-            self._state.status = WorkflowStatus.REVIEW_COMPLETED.value
-        elif decision == HumanReviewDecision.REJECTED.value:
+        if decision == HumanReviewDecision.REJECTED.value:
             self._state.status = WorkflowStatus.REJECTED.value
-        else:
+            return {"status": self._state.status, "state": self._state.__dict__}
+        if decision != HumanReviewDecision.APPROVED.value:
             self._state.status = WorkflowStatus.NEEDS_CHANGES.value
+            return {"status": self._state.status, "state": self._state.__dict__}
+
+        self._state.status = WorkflowStatus.REVIEW_COMPLETED.value
+
+        # 7) Post-firma: repertorio + Adempimento Unico + conservazione.
+        # Solo per atti notarili (legali skippano: PCT/ricorsi hanno deposito separato).
+        is_notarile = input.template_id.startswith("notarile.")
+        if not is_notarile:
+            return {"status": self._state.status, "state": self._state.__dict__}
+
+        # 7a) Numero di repertorio progressivo (L.89/1913 art. 62)
+        rep: RepertorioResult = await workflow.execute_activity(
+            repertorio_assign,
+            RepertorioRequest(ctx=ctx, template_id=input.template_id),
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=retry,
+        )
+        self._state.repertorio = {
+            "number": rep.repertorio_number,
+            "year": rep.repertorio_year,
+            "raccolta_number": rep.raccolta_number,
+        }
+        self._state.status = WorkflowStatus.REPERTORIO_ASSIGNED.value
+
+        # 7b) Adempimento Unico telematico (DPR 131/86 art. 19) - mock SOGEI
+        tax_total = (self._state.tax or {}).get("total", 0.0) or 0.0
+        adem: AdempimentoUnicoResult = await workflow.execute_activity(
+            adempimento_submit,
+            AdempimentoUnicoRequest(
+                ctx=ctx,
+                template_id=input.template_id,
+                base_imponibile=input.base_imponibile,
+                is_prima_casa=input.is_prima_casa,
+                tax_total=tax_total,
+                parties=input.parties,
+                repertorio_number=rep.repertorio_number,
+                repertorio_year=rep.repertorio_year,
+            ),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=retry,
+        )
+        self._state.status = WorkflowStatus.ADEMPIMENTO_SUBMITTED.value
+        self._state.adempimento = {
+            "protocol_id": adem.protocol_id,
+            "accepted": adem.accepted,
+            "transcription_number": adem.transcription_number,
+            "voltura_number": adem.voltura_number,
+        }
+        if adem.accepted:
+            self._state.status = WorkflowStatus.ADEMPIMENTO_REGISTERED.value
+
+        # 7c) Conservazione mock (AgID + SInCRO) - bundle su MinIO con WORM
+        if self._state.draft and self._state.draft.get("document_id"):
+            cons: ConservationResult = await workflow.execute_activity(
+                conservation_archive,
+                ConservationRequest(
+                    ctx=ctx,
+                    template_id=input.template_id,
+                    draft_document_id=self._state.draft["document_id"],
+                ),
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=retry,
+            )
+            self._state.conservation = {
+                "bundle_uri": cons.bundle_uri,
+                "bundle_sha256": cons.bundle_sha256,
+                "retention_until": cons.retention_until.isoformat(),
+            }
+            self._state.status = WorkflowStatus.CONSERVATO.value
+
+        self._state.status = WorkflowStatus.ARCHIVIATO.value
         return {"status": self._state.status, "state": self._state.__dict__}
 
 

@@ -26,10 +26,16 @@ from notai.contexts.integrations.telemaco import TelemacoAdapter
 from notai.shared.tenancy.session import scoped_session
 
 from .common import (
+    AdempimentoUnicoRequest,
+    AdempimentoUnicoResult,
+    ConservationRequest,
+    ConservationResult,
     DraftRequest,
     DraftResult,
     HumanReviewRequest,
     HumanReviewResponse,
+    RepertorioRequest,
+    RepertorioResult,
     SlotExtractRequest,
     SlotExtractResult,
     TaxCalculationRequest,
@@ -488,6 +494,219 @@ async def human_review_completed(
     )
 
 
+# ---------------------------------------------------------------------------
+# Post-firma: repertorio numerico + Adempimento Unico mock + conservazione mock
+# ---------------------------------------------------------------------------
+
+
+@activity.defn(name="repertorio.assign")
+async def repertorio_assign(req: RepertorioRequest) -> RepertorioResult:
+    """Assegna numero di repertorio progressivo per (tenant, anno).
+
+    L.89/1913 art. 62 + DM 31/10/2006 (repertorio informatico): ogni atto
+    ha numero progressivo per anno notarile. La raccolta replica la numerazione.
+
+    Implementazione: SELECT MAX(repertorio_number)+1 sotto advisory lock per
+    evitare race. Salva sull'Act.
+    """
+    from sqlalchemy import func, select as sa_select, text as sa_text
+    from notai.contexts.practices.acts_repository import ActRepository
+    from notai.contexts.practices.models import Act
+
+    activity.heartbeat("assigning repertorio number")
+    year = datetime.now(timezone.utc).year
+    tenant_uuid = uuid.UUID(req.ctx.tenant_id)
+    act_uuid = uuid.UUID(req.ctx.act_id)
+
+    async with scoped_session(tenant_uuid) as session:
+        # Advisory lock per evitare collisioni nella numerazione concorrente
+        # (tenant_id + anno).
+        lock_key = f"repertorio:{tenant_uuid}:{year}"
+        await session.execute(
+            sa_text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": lock_key}
+        )
+
+        next_num = (
+            await session.execute(
+                sa_select(func.coalesce(func.max(Act.repertorio_number), 0) + 1)
+                .where(Act.tenant_id == tenant_uuid, Act.repertorio_year == year)
+            )
+        ).scalar_one()
+
+        act = await ActRepository(session).get(act_uuid)
+        if act is None:
+            raise ValueError(f"act {act_uuid} non trovato")
+
+        # Se gia' aveva un numero, riusalo (idempotenza Temporal retry)
+        if act.repertorio_number is not None:
+            next_num = act.repertorio_number
+            year = act.repertorio_year or year
+
+        act.repertorio_number = next_num
+        act.repertorio_year = year
+        act.raccolta_number = next_num  # mock: stessa numerazione (in pratica diverge)
+        act.stipulation_date = datetime.now(timezone.utc)
+
+        await _audit(
+            req.ctx,
+            event_type="repertorio.assigned",
+            payload={
+                "repertorio_number": next_num,
+                "repertorio_year": year,
+                "raccolta_number": next_num,
+                "norm_ref": "L.89/1913 art. 62; DM 31/10/2006",
+            },
+        )
+
+    logger.info(
+        "notai.activity.repertorio_assigned",
+        act_id=str(act_uuid),
+        repertorio_year=year,
+        repertorio_number=next_num,
+    )
+    return RepertorioResult(
+        repertorio_number=int(next_num),
+        raccolta_number=int(next_num),
+        repertorio_year=year,
+    )
+
+
+@activity.defn(name="adempimento.submit")
+async def adempimento_submit(req: AdempimentoUnicoRequest) -> AdempimentoUnicoResult:
+    """Invia l'Adempimento Unico a SOGEI (mock). DPR 131/86 art. 19:
+    in un'unica trasmissione telematica: registrazione + trascrizione + voltura.
+    """
+    from notai.contexts.integrations.sogei import SogeiAdapter
+
+    activity.heartbeat("submitting adempimento unico")
+    adapter = SogeiAdapter()
+    raw = await adapter.submit_adempimento_unico(
+        template_id=req.template_id,
+        base_imponibile=req.base_imponibile,
+        is_prima_casa=req.is_prima_casa,
+        tax_total=req.tax_total,
+        parties=req.parties,
+        repertorio_number=req.repertorio_number,
+        repertorio_year=req.repertorio_year,
+    )
+    h = _hash_payload(raw)
+    submitted_at_iso = raw["submitted_at"]
+    submitted_at = datetime.fromisoformat(submitted_at_iso)
+
+    await _audit(
+        req.ctx,
+        event_type="adempimento.submitted",
+        payload={
+            "protocol_id": raw["protocol_id"],
+            "accepted": raw["accepted"],
+            "receipt_hash": raw["receipt_hash"],
+            "transcription_number": raw.get("transcription_number"),
+            "voltura_number": raw.get("voltura_number"),
+            "payload_sha256": h,
+            "norm_ref": raw.get("norm_ref"),
+        },
+    )
+
+    logger.info(
+        "notai.activity.adempimento_unico",
+        protocol=raw["protocol_id"],
+        accepted=raw["accepted"],
+    )
+    return AdempimentoUnicoResult(
+        protocol_id=raw["protocol_id"],
+        submitted_at=submitted_at,
+        accepted=raw["accepted"],
+        receipt_hash=raw["receipt_hash"],
+        transcription_number=raw.get("transcription_number"),
+        voltura_number=raw.get("voltura_number"),
+    )
+
+
+@activity.defn(name="conservation.archive")
+async def conservation_archive(req: ConservationRequest) -> ConservationResult:
+    """Mock conservazione AgID. Bundle = atto md + chain audit + metadati,
+    salvato su MinIO bucket conservazione (WORM lock se configurato).
+
+    Riferimenti normativi: AgID Linee Guida conservazione + SInCRO UNI 11386.
+    Retention: 10 anni minimum per atti notarili.
+    """
+    import hashlib
+    from minio.error import S3Error
+    from sqlalchemy import select as sa_select
+    from notai.contexts.documents.models import Document
+    from notai.contexts.documents.storage import get_blob, put_blob
+
+    activity.heartbeat("preparing conservation bundle")
+    tenant_uuid = uuid.UUID(req.ctx.tenant_id)
+    act_uuid = uuid.UUID(req.ctx.act_id)
+    draft_doc_id = uuid.UUID(req.draft_document_id)
+
+    # Bundle: scarica atto markdown + serializza una sintesi dei metadati.
+    async with scoped_session(tenant_uuid) as session:
+        doc = (
+            await session.execute(sa_select(Document).where(Document.id == draft_doc_id))
+        ).scalar_one_or_none()
+        if doc is None:
+            raise ValueError(f"draft {draft_doc_id} non trovato")
+        try:
+            bucket, key = doc.storage_uri.replace("s3://", "").split("/", 1)
+            atto_bytes = await get_blob(bucket, key)
+        except Exception:  # noqa: BLE001
+            atto_bytes = b"(atto non recuperabile da storage)"
+
+    archived_at = datetime.now(timezone.utc)
+    retention_until = archived_at.replace(year=archived_at.year + 10)
+
+    bundle = {
+        "act_id": str(act_uuid),
+        "template_id": req.template_id,
+        "draft_document_id": str(draft_doc_id),
+        "archived_at": archived_at.isoformat(),
+        "retention_until": retention_until.isoformat(),
+        "conservator_id": "mock-aruba",
+        "atto_sha256": doc.sha256 if doc else None,
+        "norm_ref": "AgID LG Conservazione + SInCRO UNI 11386",
+    }
+    bundle_json = canonical_json(bundle)
+    # Concatena atto + manifest (in produzione: TAR/ZIP firmato SInCRO)
+    bundle_payload = bundle_json + b"\n---ATTO-START---\n" + atto_bytes
+    bundle_sha = hashlib.sha256(bundle_payload).hexdigest()
+
+    # Upload bundle. Bucket dedicato 'notai-audit-bundles' (gia' in compose
+    # con object-lock WORM se MinIO configurato).
+    bundle_bucket = "notai-audit-bundles"
+    bundle_key = f"conservation/{tenant_uuid}/{archived_at.year}/{act_uuid}-{bundle_sha[:12]}.bundle"
+    try:
+        bundle_uri, _ = await put_blob(bundle_bucket, bundle_key, bundle_payload, "application/octet-stream")
+    except S3Error as e:
+        logger.warning("notai.conservation.put_failed", error=str(e))
+        bundle_uri = f"(failed) s3://{bundle_bucket}/{bundle_key}"
+
+    await _audit(
+        req.ctx,
+        event_type="conservation.archived",
+        payload={
+            "bundle_uri": bundle_uri,
+            "bundle_sha256": bundle_sha,
+            "conservator_id": "mock-aruba",
+            "retention_until": retention_until.isoformat(),
+            "norm_ref": "AgID LG Conservazione + SInCRO UNI 11386",
+        },
+    )
+    logger.info(
+        "notai.activity.conservation_archived",
+        bundle_uri=bundle_uri,
+        bundle_sha=bundle_sha[:12],
+    )
+    return ConservationResult(
+        bundle_uri=bundle_uri,
+        bundle_sha256=bundle_sha,
+        conservator_id="mock-aruba",
+        archived_at=archived_at,
+        retention_until=retention_until,
+    )
+
+
 ALL_ACTIVITIES = [
     visura_telemaco,
     visura_anpr,
@@ -496,4 +715,7 @@ ALL_ACTIVITIES = [
     tax_calculate,
     human_review_requested,
     human_review_completed,
+    repertorio_assign,
+    adempimento_submit,
+    conservation_archive,
 ]

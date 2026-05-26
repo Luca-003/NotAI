@@ -30,6 +30,12 @@ class WorkflowStatus(str, Enum):
     REJECTED = "rejected"
     NEEDS_CHANGES = "needs_changes"
     CANCELLED = "cancelled"
+    # Post-firma (Fase 2.5: SOGEI/conservazione tutto mock)
+    REPERTORIO_ASSIGNED = "repertorio_assigned"
+    ADEMPIMENTO_SUBMITTED = "adempimento_submitted"
+    ADEMPIMENTO_REGISTERED = "adempimento_registered"
+    CONSERVATO = "conservato"
+    ARCHIVIATO = "archiviato"
 
 
 class HumanReviewDecision(str, Enum):
@@ -137,6 +143,73 @@ class HumanReviewResponse:
     user_id: str | None = None
     completed_at: datetime | None = None
     modifications: dict | None = None
+
+
+# ---------------------------------------------------------------------------
+# Post-firma (Fase 2.5): repertorio, adempimento unico, conservazione.
+# Tutto mock per ora ma con shape compatibile con i protocolli reali.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RepertorioRequest:
+    ctx: WorkflowContext
+    template_id: str
+
+
+@dataclass
+class RepertorioResult:
+    repertorio_number: int
+    raccolta_number: int
+    repertorio_year: int
+
+
+@dataclass
+class AdempimentoUnicoRequest:
+    ctx: WorkflowContext
+    template_id: str
+    base_imponibile: float
+    is_prima_casa: bool
+    tax_total: float
+    parties: list[dict]
+    repertorio_number: int
+    repertorio_year: int
+
+
+@dataclass
+class AdempimentoUnicoResult:
+    """Risposta mock di SOGEI/Entratel.
+
+    In Fase 5+ reale: protocollo + ricevuta XML firmata digitalmente.
+    """
+    protocol_id: str
+    submitted_at: datetime
+    accepted: bool
+    receipt_hash: str
+    transcription_number: str | None = None
+    voltura_number: str | None = None
+
+
+@dataclass
+class ConservationRequest:
+    ctx: WorkflowContext
+    template_id: str
+    draft_document_id: str   # UUID del Document bozza
+
+
+@dataclass
+class ConservationResult:
+    """Risposta mock di conservatore AgID accreditato.
+
+    Bundle = atto markdown + audit chain + timestamp_token, salvato su MinIO
+    bucket di conservazione con object-lock WORM (immutabile, retention 10y).
+    In Fase 5+ reale: invio SInCRO UNI 11386 a Aruba/InfoCert/Namirial.
+    """
+    bundle_uri: str          # s3://notai-conservation/...
+    bundle_sha256: str
+    conservator_id: str      # "mock-aruba" per ora
+    archived_at: datetime
+    retention_until: datetime
 
 
 def make_workflow_id(act_id: uuid.UUID | str) -> str:

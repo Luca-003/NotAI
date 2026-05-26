@@ -235,6 +235,9 @@ async def get_workflow_status(
             "draft": state.draft,
             "tax": state.tax,
             "review": state.review,
+            "repertorio": state.repertorio,
+            "adempimento": state.adempimento,
+            "conservation": state.conservation,
         },
     }
 
