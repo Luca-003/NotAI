@@ -30,11 +30,15 @@ class WorkflowStatus(str, Enum):
     REJECTED = "rejected"
     NEEDS_CHANGES = "needs_changes"
     CANCELLED = "cancelled"
-    # Post-firma (Fase 2.5: SOGEI/conservazione tutto mock)
+    # Post-firma notarile (Fase 2.5: SOGEI/conservazione tutto mock)
     REPERTORIO_ASSIGNED = "repertorio_assigned"
     ADEMPIMENTO_SUBMITTED = "adempimento_submitted"
     ADEMPIMENTO_REGISTERED = "adempimento_registered"
     CONSERVATO = "conservato"
+    # Post-firma legale (PCT/Processo Civile Telematico, mock)
+    PCT_DEPOSITED = "pct_deposited"
+    PCT_RECEIVED = "pct_received"
+    # Terminale comune
     ARCHIVIATO = "archiviato"
 
 
@@ -195,6 +199,32 @@ class ConservationRequest:
     ctx: WorkflowContext
     template_id: str
     draft_document_id: str   # UUID del Document bozza
+
+
+@dataclass
+class PCTDepositRequest:
+    """Deposito tramite Processo Civile Telematico (DM 44/2011)."""
+    ctx: WorkflowContext
+    template_id: str
+    draft_document_id: str
+    parties: list[dict]
+    court_hint: str | None = None   # tribunale destinatario (es. 'Milano')
+
+
+@dataclass
+class PCTDepositResult:
+    """Risposta mock dal sistema PCT.
+
+    Pattern reale: busta crittografata XML + ricevuta IUV
+    (Identificativo Univoco Versamento) + numero protocollo del tribunale.
+    """
+    envelope_id: str
+    court_id: str
+    receipt_iuv: str
+    protocol_number: str
+    deposited_at: datetime
+    accepted: bool
+    receipt_hash: str
 
 
 @dataclass

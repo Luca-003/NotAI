@@ -51,6 +51,14 @@ type WorkflowState = {
     bundle_sha256: string;
     retention_until: string;
   } | null;
+  pct?: {
+    envelope_id: string;
+    court_id: string;
+    receipt_iuv: string;
+    protocol_number: string;
+    deposited_at: string;
+    accepted: boolean;
+  } | null;
 };
 
 type TaxItem = {
@@ -80,10 +88,14 @@ const ACTIVE_STATUSES = new Set([
   "draft_generated",
   "tax_calculated",
   "review_requested",
-  // Post-firma: anche queste sono "active" -> polling continua
+  // Post-firma notarile: polling continua
   "review_completed",
   "repertorio_assigned",
   "adempimento_submitted",
+  // Post-firma legale: polling continua finche' non archiviato
+  "pct_deposited",
+  "pct_received",
+  "conservato",
 ]);
 
 export function ActDetail({
@@ -521,6 +533,37 @@ function WorkflowView({
         </section>
       )}
 
+      {state.pct && (
+        <section style={{ ...card, background: "#ecfeff", borderColor: "#67e8f9" }}>
+          <h3 style={{ marginTop: 0, color: "#155e75" }}>
+            Deposito PCT (Processo Civile Telematico mock)
+          </h3>
+          <p style={{ margin: "0.2rem 0" }}>
+            <strong>Tribunale:</strong> {state.pct.court_id}
+          </p>
+          <p style={{ margin: "0.2rem 0" }}>
+            <strong>Busta:</strong> <code>{state.pct.envelope_id}</code>{" "}
+            {state.pct.accepted ? (
+              <span style={{ color: "#16a34a", fontWeight: 600 }}>· ✓ accettata</span>
+            ) : (
+              <span style={{ color: "#b91c1c", fontWeight: 600 }}>· ✗ rifiutata</span>
+            )}
+          </p>
+          <p style={{ margin: "0.2rem 0", fontSize: "0.9rem" }}>
+            Protocollo: <code>{state.pct.protocol_number}</code>{" · "}
+            IUV: <code style={{ fontSize: "0.78rem" }}>{state.pct.receipt_iuv}</code>
+          </p>
+          <p style={{ margin: "0.2rem 0", fontSize: "0.85rem", color: "#64748b" }}>
+            Depositato il {new Date(state.pct.deposited_at).toLocaleString("it-IT")}
+          </p>
+          <small style={{ color: "#0e7490" }}>
+            DM 44/2011 + DL 179/2012 art. 16 — busta telematica crittografata
+            via ConsoliCom/Lextel/GiustiziaIT. <em>Mock PCT: in Fase 5+
+            integrazione reale con firma client avvocato.</em>
+          </small>
+        </section>
+      )}
+
       {state.conservation && (
         <section style={{ ...card, background: "#faf5ff", borderColor: "#d8b4fe" }}>
           <h3 style={{ marginTop: 0, color: "#581c87" }}>Conservazione a norma</h3>
@@ -551,20 +594,43 @@ function WorkflowView({
   );
 }
 
+// STEPS universali per i 5 macro-stati comuni. Le specializzazioni post-firma
+// (notarile: repertorio/SOGEI; legale: PCT) sono mostrate dalle section card
+// dedicate sotto, NON dalla progress bar.
 const STEPS = [
   { id: "visure_in_corso", label: "Visure" },
   { id: "draft_generated", label: "Bozza" },
   { id: "tax_calculated", label: "Imposte" },
-  { id: "review_requested", label: "Review notaio" },
+  { id: "review_requested", label: "Review" },
   { id: "review_completed", label: "Firmato" },
-  { id: "repertorio_assigned", label: "Repertorio" },
-  { id: "adempimento_registered", label: "Registrato (SOGEI)" },
-  { id: "conservato", label: "Conservato (AgID)" },
   { id: "archiviato", label: "Archiviato" },
 ];
 
+// Mapping status -> indice STEPS effettivo (cosi' gli stati post-firma
+// 'risolvono' allo step 'Firmato' senza saltare).
+const STATUS_TO_STEP_INDEX: Record<string, number> = {
+  visure_in_corso: 0,
+  draft_in_corso: 1,
+  draft_generated: 1,
+  tax_calculated: 2,
+  review_requested: 3,
+  review_completed: 4,
+  // Tutti i post-firma intermedi: "Firmato" visualmente, poi -> Archiviato finale
+  repertorio_assigned: 4,
+  adempimento_submitted: 4,
+  adempimento_registered: 4,
+  pct_deposited: 4,
+  pct_received: 4,
+  conservato: 4,
+  archiviato: 5,
+  rejected: 4,
+  needs_changes: 4,
+  cancelled: 5,
+};
+
 function ProgressSteps({ status }: { status: string }) {
-  const idx = STEPS.findIndex((s) => s.id === status);
+  // Mapping diretto: ogni status -> indice STEPS effettivo
+  const idx = STATUS_TO_STEP_INDEX[status] ?? STEPS.findIndex((s) => s.id === status);
   const completed = status === "archiviato";
   return (
     <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem", flexWrap: "wrap" }}>

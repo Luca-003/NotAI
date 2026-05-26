@@ -238,6 +238,7 @@ async def get_workflow_status(
             "repertorio": state.repertorio,
             "adempimento": state.adempimento,
             "conservation": state.conservation,
+            "pct": state.pct,
         },
     }
 

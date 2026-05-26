@@ -34,6 +34,8 @@ from .common import (
     DraftResult,
     HumanReviewRequest,
     HumanReviewResponse,
+    PCTDepositRequest,
+    PCTDepositResult,
     RepertorioRequest,
     RepertorioResult,
     SlotExtractRequest,
@@ -707,6 +709,57 @@ async def conservation_archive(req: ConservationRequest) -> ConservationResult:
     )
 
 
+@activity.defn(name="pct.deposit")
+async def pct_deposit(req: PCTDepositRequest) -> PCTDepositResult:
+    """Mock deposito PCT (Processo Civile Telematico).
+
+    DM 44/2011 + art. 16 DL 179/2012. In Fase 5+ reale: integrazione
+    ConsoliCom / Lextel / GiustiziaIT via busta crittografata firmata.
+    """
+    from notai.contexts.integrations.pct import PCTAdapter
+
+    activity.heartbeat("preparing PCT envelope")
+    adapter = PCTAdapter()
+    raw = await adapter.deposit(
+        template_id=req.template_id,
+        draft_document_id=req.draft_document_id,
+        parties=req.parties,
+        court_hint=req.court_hint,
+    )
+    h = _hash_payload(raw)
+    deposited_at = datetime.fromisoformat(raw["deposited_at"])
+
+    await _audit(
+        req.ctx,
+        event_type="pct.deposited",
+        payload={
+            "envelope_id": raw["envelope_id"],
+            "court_id": raw["court_id"],
+            "receipt_iuv": raw["receipt_iuv"],
+            "protocol_number": raw["protocol_number"],
+            "accepted": raw["accepted"],
+            "receipt_hash": raw["receipt_hash"],
+            "payload_sha256": h,
+            "norm_ref": raw.get("norm_ref"),
+        },
+    )
+    logger.info(
+        "notai.activity.pct_deposit",
+        envelope_id=raw["envelope_id"],
+        court=raw["court_id"],
+        accepted=raw["accepted"],
+    )
+    return PCTDepositResult(
+        envelope_id=raw["envelope_id"],
+        court_id=raw["court_id"],
+        receipt_iuv=raw["receipt_iuv"],
+        protocol_number=raw["protocol_number"],
+        deposited_at=deposited_at,
+        accepted=raw["accepted"],
+        receipt_hash=raw["receipt_hash"],
+    )
+
+
 ALL_ACTIVITIES = [
     visura_telemaco,
     visura_anpr,
@@ -718,4 +771,5 @@ ALL_ACTIVITIES = [
     repertorio_assign,
     adempimento_submit,
     conservation_archive,
+    pct_deposit,
 ]

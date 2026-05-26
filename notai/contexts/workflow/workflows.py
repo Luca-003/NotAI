@@ -28,6 +28,7 @@ with workflow.unsafe.imports_passed_through():
         draft_generate,
         human_review_completed,
         human_review_requested,
+        pct_deposit,
         repertorio_assign,
         slot_extract,
         tax_calculate,
@@ -44,6 +45,8 @@ with workflow.unsafe.imports_passed_through():
         HumanReviewDecision,
         HumanReviewRequest,
         HumanReviewResponse,
+        PCTDepositRequest,
+        PCTDepositResult,
         RepertorioRequest,
         RepertorioResult,
         SlotExtractRequest,
@@ -80,10 +83,12 @@ class AtoWorkflowState:
     draft: dict | None = None
     tax: dict | None = None
     review: dict | None = None
-    # Post-firma
+    # Post-firma notarile
     repertorio: dict | None = None        # {number, year, raccolta_number}
     adempimento: dict | None = None       # {protocol_id, accepted, transcription_number, voltura_number}
     conservation: dict | None = None      # {bundle_uri, bundle_sha256, retention_until}
+    # Post-firma legale
+    pct: dict | None = None               # {envelope_id, court_id, receipt_iuv, protocol_number}
 
 
 @workflow.defn(name="AtoWorkflow")
@@ -274,9 +279,61 @@ class AtoWorkflow:
 
         self._state.status = WorkflowStatus.REVIEW_COMPLETED.value
 
-        # 7) Post-firma: repertorio + Adempimento Unico + conservazione.
-        # Solo per atti notarili (legali skippano: PCT/ricorsi hanno deposito separato).
+        # 7) Post-firma: branch in base al vertical.
+        #    notarile.* -> repertorio + Adempimento Unico + conservazione
+        #    legale.*   -> deposito PCT
+        #    altri      -> stop a review_completed
         is_notarile = input.template_id.startswith("notarile.")
+        is_legale = input.template_id.startswith("legale.")
+
+        if is_legale:
+            # 7-LEG) Deposito PCT (DM 44/2011 + DL 179/2012)
+            draft_doc_id = (self._state.draft or {}).get("document_id")
+            if not draft_doc_id:
+                return {"status": self._state.status, "state": self._state.__dict__}
+            pct: PCTDepositResult = await workflow.execute_activity(
+                pct_deposit,
+                PCTDepositRequest(
+                    ctx=ctx,
+                    template_id=input.template_id,
+                    draft_document_id=draft_doc_id,
+                    parties=input.parties,
+                ),
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=retry,
+            )
+            self._state.pct = {
+                "envelope_id": pct.envelope_id,
+                "court_id": pct.court_id,
+                "receipt_iuv": pct.receipt_iuv,
+                "protocol_number": pct.protocol_number,
+                "deposited_at": pct.deposited_at.isoformat(),
+                "accepted": pct.accepted,
+            }
+            self._state.status = WorkflowStatus.PCT_DEPOSITED.value
+            if pct.accepted:
+                self._state.status = WorkflowStatus.PCT_RECEIVED.value
+            # Legale: anche qui conserviamo l'atto (procura, accordo, ricorso, ecc.)
+            if self._state.draft and self._state.draft.get("document_id"):
+                cons_leg: ConservationResult = await workflow.execute_activity(
+                    conservation_archive,
+                    ConservationRequest(
+                        ctx=ctx,
+                        template_id=input.template_id,
+                        draft_document_id=self._state.draft["document_id"],
+                    ),
+                    start_to_close_timeout=timedelta(seconds=60),
+                    retry_policy=retry,
+                )
+                self._state.conservation = {
+                    "bundle_uri": cons_leg.bundle_uri,
+                    "bundle_sha256": cons_leg.bundle_sha256,
+                    "retention_until": cons_leg.retention_until.isoformat(),
+                }
+                self._state.status = WorkflowStatus.CONSERVATO.value
+            self._state.status = WorkflowStatus.ARCHIVIATO.value
+            return {"status": self._state.status, "state": self._state.__dict__}
+
         if not is_notarile:
             return {"status": self._state.status, "state": self._state.__dict__}
 
