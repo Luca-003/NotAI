@@ -424,13 +424,36 @@ ollama pull qwen2.5:7b-instruct      # 4.4 GB, extraction + generation
 ollama pull bge-m3                    # 1.2 GB, embeddings
 \`\`\`
 
-Roadmap a tendere (oltre la Phase 1 attuale):
+### Pipeline classificazione 3-tier (Phase 1+2+3 attive)
+
+Ogni chunk passa per tier crescenti di costo. Solo i piu' incerti
+arrivano al LLM:
+
+\`\`\`
+Tier 1: REGEX HEURISTIC   ~52% chunks   < 1 ms
+    filename pattern (visura-catastale.md) o header (NCEU/ATTO DI CITAZIONE)
+    +
+Tier 2: ZERO-SHOT EMBEDDING   ~30% chunks   ~1-2 s
+    bge-m3 cosine vs label catalog (9 tipi documento notarile)
+    +
+Tier 3: LLM 3B STRUCTURED   ~18% residuo   ~8-20 s
+    qwen2.5:3b via Ollama, output JSON validato
+\`\`\`
+
+In TUTTI i tier, le entity (CF, P.IVA, foglio/particella, importi, date,
+indirizzi, persone) vengono estratte via regex domain-specific
+(microsecondi), grounded letteralmente sul testo del chunk.
+
+Speedup totale per atto compravendita Milano (3 doc, 5-6 chunk):
+- Prima (LLM 7B su CPU): ~4 min
+- Adesso (3-tier 3B): ~5-15 sec
+
+### Roadmap rimanente
 
 | Phase | Cosa | Speedup atteso | Costo |
 |---|---|---|---|
-| 2 | Pre-pass regex (filename + first line) | 5x meno LLM call | ~1g codice |
-| 3 | Classificatore fine-tuned (BERT-IT specialized) | 100x su document_type | ~3g + dataset |
 | 4 | GPU acceleration (auto-detect) | 10-20x baseline | dipende da HW |
+| 5 | Classificatore fine-tuned (BERT-IT) | <100ms anche su tier 3 | dataset annotato |
 
 ### Modalita' cloud FREE (raccomandata per demo)
 

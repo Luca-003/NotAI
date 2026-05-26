@@ -62,7 +62,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _configure_logging(settings.log_level)
     settings.assert_prod_safe()
     logger.info("notai.api.startup", env=settings.env)
-    # TODO: warmup connessioni (DB pool, Temporal client, MinIO, ecc.)
+    # HW baseline: log GPU/CPU + suggerimenti concorrenza (best-effort,
+    # non blocca lo startup se Ollama e' down).
+    try:
+        from notai.contexts.ai.hw_probe import log_hardware_baseline
+        await log_hardware_baseline()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("notai.hw.probe_skipped", error=str(e))
     yield
     logger.info("notai.api.shutdown")
 
